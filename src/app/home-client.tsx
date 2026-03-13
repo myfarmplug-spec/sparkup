@@ -168,6 +168,10 @@ interface SparkPost {
   reactedBy: Record<Reaction, string[]>;
   sparkType: SparkType; journeyId: string; linkedSparkId?: number;
 }
+interface Message {
+  id: number; fromUsername: string; toUsername: string;
+  content: string; read: boolean; createdAt: string;
+}
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
@@ -254,6 +258,26 @@ async function updateCoins(userId: string, coins: number) {
   await supabase.from("profiles").update({ coins }).eq("id", userId);
 }
 
+async function fetchMessages(username: string): Promise<Message[]> {
+  const { data } = await supabase.from("messages").select("*")
+    .or(`from_username.eq.${username},to_username.eq.${username}`)
+    .order("created_at", { ascending: true });
+  if (!data) return [];
+  return data.map(r => ({
+    id: r.id, fromUsername: r.from_username, toUsername: r.to_username,
+    content: r.content, read: r.read, createdAt: r.created_at,
+  }));
+}
+
+async function sendMessage(from: string, to: string, content: string): Promise<void> {
+  await supabase.from("messages").insert({ from_username: from, to_username: to, content });
+}
+
+async function markRead(from: string, to: string): Promise<void> {
+  await supabase.from("messages").update({ read: true })
+    .eq("from_username", from).eq("to_username", to).eq("read", false);
+}
+
 // ─── Email helper ─────────────────────────────────────────────────────────────
 async function sendEmail(
   event: string,
@@ -321,13 +345,13 @@ function SparkMedia({ mediaUrl, mediaType, maxH = "500px" }: { mediaUrl: string;
   if (mediaType === "image") {
     return (
       <Box w="full" overflow="hidden" style={{ maxHeight: maxH }}>
-        <img src={mediaUrl} alt="spark" style={{ width:"100%", maxHeight: maxH, objectFit:"cover", display:"block" }} />
+        <img src={mediaUrl} alt="spark" loading="lazy" decoding="async" style={{ width:"100%", maxHeight: maxH, objectFit:"cover", display:"block" }} />
       </Box>
     );
   }
   return (
     <AspectRatio ratio={9/16} maxH={maxH}>
-      <video src={mediaUrl} controls playsInline style={{ background:"#111", width:"100%", height:"100%", objectFit:"cover" }} />
+      <video src={mediaUrl} controls playsInline preload="none" style={{ background:"#111", width:"100%", height:"100%", objectFit:"cover" }} />
     </AspectRatio>
   );
 }
@@ -1168,35 +1192,33 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
   onShowMySpark: () => void;
   setViewProfile: (u:string)=>void;
 }) {
-  const [myReactions, setMyReactions] = useState<Record<number,Reaction|null>>({});
+  const [myReactions, setMyReactions] = useState<Record<number, Reaction[]>>({});
   const [prevOpen,    setPrevOpen]    = useState<Record<number,boolean>>({});
   const [reactPeek,   setReactPeek]   = useState<{ sparkId:number; reaction:Reaction; names:string[] }|null>(null);
 
-  // Initialise from DB so reactions persist across page reloads
+  // Initialise from DB — support multiple reactions per post
   useEffect(() => {
-    const initial: Record<number,Reaction|null> = {};
+    const initial: Record<number, Reaction[]> = {};
     sparks.forEach(s => {
-      const found = (Object.keys(s.reactedBy) as Reaction[]).find(r => s.reactedBy[r]?.includes(user.username));
-      if (found) initial[s.id] = found;
+      const mine = (Object.keys(s.reactedBy) as Reaction[]).filter(r => s.reactedBy[r]?.includes(user.username));
+      if (mine.length) initial[s.id] = mine;
     });
     setMyReactions(initial);
   }, [sparks, user.username]);
 
   const handleReact = async (sparkId: number, reaction: Reaction) => {
-    const prev = myReactions[sparkId];
-    const isUnreact = prev === reaction;   // clicking same reaction = remove it
-    setMyReactions(r => ({ ...r, [sparkId]: isUnreact ? null : reaction }));
+    const current = myReactions[sparkId] ?? [];
+    const alreadyReacted = current.includes(reaction);
+    setMyReactions(r => ({ ...r, [sparkId]: alreadyReacted ? current.filter(x => x !== reaction) : [...current, reaction] }));
     setSparks(posts => posts.map(s => {
       if (s.id !== sparkId) return s;
       const reactions = { ...s.reactions };
       const reactedBy = { ...s.reactedBy };
-      // Remove previous (or same if unreacting)
-      if (prev) {
-        reactions[prev] = Math.max(0, reactions[prev] - 1);
-        reactedBy[prev] = reactedBy[prev].filter(u => u !== user.username);
+      if (alreadyReacted) {
+        reactions[reaction] = Math.max(0, reactions[reaction] - 1);
+        reactedBy[reaction] = reactedBy[reaction].filter(u => u !== user.username);
       }
-      // Add new reaction only if not unreacting
-      if (!isUnreact) {
+      if (!alreadyReacted) {
         reactions[reaction] += 1;
         reactedBy[reaction] = [...(reactedBy[reaction] || []), user.username];
       }
@@ -1298,7 +1320,7 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
                 <Box px={4} pt={3} pb={1}><Text color="gray.800" fontWeight="600" fontSize="sm" lineHeight="tall">{s.caption}</Text></Box>
                 <Flex px={4} pb={5} pt={3} gap={2} flexWrap="wrap">
                   {REACTIONS.map(({ label, emoji }) => {
-                    const active = myReactions[s.id]===label;
+                    const active = myReactions[s.id]?.includes(label) ?? false;
                     return (
                       <Button key={label} size="sm" rounded="full" bg={active?ORANGE:"orange.50"} color={active?"white":BROWN} border="1.5px solid" borderColor={active?ORANGE:"orange.200"} fontWeight="700" fontSize="xs" px={3} _hover={{ bg:active?"#c44d16":"orange.100" }} transition="all 0.15s" onClick={()=>handleReact(s.id,label)}>
                         {emoji} {label}
@@ -1375,49 +1397,203 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
   onOpenTokens: () => void; onEdit: () => void; onLogout: () => void;
   setViewProfile: (u:string)=>void;
 }) {
-  const mySparks   = sparks.filter(s=>s.userId===user.id);
-  const totalReactions = mySparks.reduce((sum,s)=>sum+Object.values(s.reactions).reduce((a,b)=>a+b,0),0);
-  const hiConnects = sparks
+  const mySparks        = sparks.filter(s=>s.userId===user.id);
+  const totalReactions  = mySparks.reduce((sum,s)=>sum+Object.values(s.reactions).reduce((a,b)=>a+b,0),0);
+  const hiConnects      = sparks
     .filter(s=>s.userId!==user.id && s.reactedBy["Say Hi"]?.includes(user.username))
     .map(s=>({ name:s.name, username:s.username, profilePicUrl:s.profilePicUrl }))
     .filter((v,i,arr)=>arr.findIndex(x=>x.username===v.username)===i);
-  const age = user.birthYear ? calcAge(user.birthYear) : null;
+  const age             = user.birthYear ? calcAge(user.birthYear) : null;
 
+  const [messages,    setMessages]    = useState<Message[]>([]);
+  const [activeChat,  setActiveChat]  = useState<string|null>(null);
+  const [msgText,     setMsgText]     = useState("");
+  const [sending,     setSending]     = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef  = useRef<HTMLInputElement>(null);
+
+  // Load all messages for this user
+  useEffect(() => {
+    fetchMessages(user.username).then(setMessages);
+  }, [user.username]);
+
+  // Realtime messages
+  useEffect(() => {
+    const ch = supabase.channel("messages-rt")
+      .on("postgres_changes", { event:"INSERT", schema:"public", table:"messages" }, payload => {
+        const r = payload.new as Record<string,unknown>;
+        const m: Message = { id: r.id as number, fromUsername: r.from_username as string, toUsername: r.to_username as string, content: r.content as string, read: r.read as boolean, createdAt: r.created_at as string };
+        if (m.fromUsername===user.username || m.toUsername===user.username) {
+          setMessages(prev => prev.some(x=>x.id===m.id) ? prev : [...prev, m]);
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [user.username]);
+
+  // Scroll to latest message
+  useEffect(() => {
+    if (activeChat) bottomRef.current?.scrollIntoView({ behavior:"smooth" });
+  }, [messages, activeChat]);
+
+  // Derive conversation list
+  const conversations = (() => {
+    const map = new Map<string, { partner:string; lastMsg:Message; unread:number }>();
+    messages.forEach(m => {
+      const partner = m.fromUsername===user.username ? m.toUsername : m.fromUsername;
+      const ex = map.get(partner);
+      const unread = messages.filter(x=>x.fromUsername===partner && x.toUsername===user.username && !x.read).length;
+      if (!ex || m.id > ex.lastMsg.id) map.set(partner, { partner, lastMsg:m, unread });
+    });
+    return Array.from(map.values()).sort((a,b)=>b.lastMsg.id-a.lastMsg.id);
+  })();
+
+  const totalUnread = messages.filter(m=>m.toUsername===user.username && !m.read).length;
+
+  const chatMessages = activeChat
+    ? messages.filter(m=>(m.fromUsername===user.username&&m.toUsername===activeChat)||(m.fromUsername===activeChat&&m.toUsername===user.username)).sort((a,b)=>a.id-b.id)
+    : [];
+
+  const openChat = (username: string) => {
+    setActiveChat(username);
+    // Mark as read locally + in DB
+    setMessages(prev=>prev.map(m=>m.fromUsername===username&&m.toUsername===user.username ? {...m,read:true} : m));
+    markRead(username, user.username);
+    setTimeout(()=>inputRef.current?.focus(), 100);
+  };
+
+  const handleSend = async () => {
+    const content = msgText.trim();
+    if (!content || !activeChat) return;
+    setMsgText(""); setSending(true);
+    await sendMessage(user.username, activeChat, content);
+    setSending(false);
+    inputRef.current?.focus();
+  };
+
+  // Partner info helper
+  const partnerInfo = (username: string) => {
+    const s = sparks.find(x=>x.username===username);
+    return { name: s?.name ?? username, profilePicUrl: s?.profilePicUrl ?? "" };
+  };
+
+  // ── Active chat view ──────────────────────────────────────────────────────
+  if (activeChat) {
+    const partner = partnerInfo(activeChat);
+    return (
+      <Box display="flex" flexDirection="column" h={{ base:"calc(100vh - 120px)", lg:"calc(100vh - 40px)" }}>
+        {/* Header */}
+        <Flex bg="white" px={4} py={3} align="center" gap={3} borderBottom="1px solid" borderColor="orange.100" position="sticky" top={0} zIndex={10} flexShrink={0}>
+          <Button variant="ghost" size="sm" color={BROWN} px={1} fontWeight="700" _hover={{ bg:"orange.50" }} onClick={()=>setActiveChat(null)}>← Back</Button>
+          <Box cursor="pointer" onClick={()=>setViewProfile(activeChat)}>
+            <UserAvatar user={partner} size="sm" />
+          </Box>
+          <Box flex={1} cursor="pointer" onClick={()=>setViewProfile(activeChat)}>
+            <Text fontWeight="900" color={BROWN} fontSize="sm" lineHeight={1.2}>{partner.name}</Text>
+            <Text fontSize="10px" color="gray.400">@{activeChat}</Text>
+          </Box>
+          <Button size="xs" variant="ghost" color={ORANGE} fontWeight="700" _hover={{ bg:"orange.50" }} onClick={()=>setViewProfile(activeChat)}>View Passport →</Button>
+        </Flex>
+
+        {/* Messages list */}
+        <Box flex={1} overflowY="auto" px={4} py={4} bg={CREAM}>
+          {chatMessages.length===0 ? (
+            <Center flexDirection="column" gap={3} py={16}>
+              <Text fontSize="36px">👋</Text>
+              <Text fontSize="sm" color="gray.500" textAlign="center" fontWeight="600">Start the conversation!</Text>
+              <Text fontSize="xs" color="gray.400" textAlign="center">Say something to {partner.name}</Text>
+            </Center>
+          ) : (
+            <VStack spacing={1} align="stretch">
+              {chatMessages.map((m, i) => {
+                const isMe = m.fromUsername===user.username;
+                const nextSame = chatMessages[i+1]?.fromUsername===m.fromUsername;
+                const prevSame = chatMessages[i-1]?.fromUsername===m.fromUsername;
+                const roundedMe    = `${prevSame?"8px":"20px"} ${nextSame?"8px":"20px"} 4px 20px`;
+                const roundedOther = `${prevSame?"8px":"20px"} ${nextSame?"8px":"20px"} 20px 4px`;
+                return (
+                  <Box key={m.id} display="flex" justifyContent={isMe?"flex-end":"flex-start"} mb={nextSame?0.5:3}>
+                    {!isMe && !nextSame && (
+                      <Box mr={2} alignSelf="flex-end" mb={0}>
+                        <UserAvatar user={partner} size="xs" />
+                      </Box>
+                    )}
+                    {!isMe && nextSame && <Box w="32px" mr={2} flexShrink={0} />}
+                    <Box maxW="72%">
+                      <Box
+                        bg={isMe?ORANGE:"white"}
+                        color={isMe?"white":"gray.800"}
+                        px={4} py={2.5}
+                        style={{ borderRadius: isMe?roundedMe:roundedOther }}
+                        fontSize="sm" fontWeight="500" lineHeight="tall"
+                        shadow={isMe?"none":"sm"}
+                        border={isMe?"none":"1px solid"} borderColor="orange.50"
+                      >
+                        {m.content}
+                      </Box>
+                      {!nextSame && (
+                        <Text fontSize="10px" color="gray.400" mt={0.5} textAlign={isMe?"right":"left"} px={1}>
+                          {new Date(m.createdAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
+                        </Text>
+                      )}
+                    </Box>
+                  </Box>
+                );
+              })}
+              <div ref={bottomRef} />
+            </VStack>
+          )}
+        </Box>
+
+        {/* Input bar */}
+        <Box bg="white" px={4} py={3} borderTop="1px solid" borderColor="orange.100" flexShrink={0}>
+          <HStack spacing={2}>
+            <Input
+              ref={inputRef as never}
+              placeholder={`Message ${partner.name}…`}
+              value={msgText}
+              onChange={e=>setMsgText(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();handleSend();} }}
+              border="2px solid" borderColor="orange.100"
+              _focus={{ borderColor:ORANGE, boxShadow:"none" }}
+              rounded="2xl" bg="orange.50" fontSize="sm"
+            />
+            <Button
+              bg={msgText.trim()?ORANGE:"gray.100"} color={msgText.trim()?"white":"gray.400"}
+              rounded="2xl" w="44px" h="40px" minW="44px" fontWeight="900" fontSize="lg"
+              onClick={handleSend} isLoading={sending}
+              isDisabled={!msgText.trim()} _hover={{ opacity:0.9 }} transition="all 0.15s"
+            >→</Button>
+          </HStack>
+        </Box>
+      </Box>
+    );
+  }
+
+  // ── Conversation list + passport ──────────────────────────────────────────
   return (
     <Box pb={8}>
       {/* ── Spark Passport ── */}
       <Box mx={{ base:0, md:4 }} mt={{ base:0, md:4 }}>
         <Box rounded={{ base:0, md:"2xl" }} overflow="hidden" shadow={{ base:"none", md:"md" }}
           style={{ background:`linear-gradient(145deg,${BROWN} 0%,#8B3A0F 55%,${ORANGE} 100%)` }}>
-          {/* Passport header */}
           <Flex px={{ base:5, md:6 }} pt={6} pb={4} align="flex-start" gap={4}>
             <Box position="relative">
               <Box w={{ base:"72px", md:"88px" }} h={{ base:"72px", md:"88px" }} rounded="2xl" overflow="hidden" border="3px solid rgba(255,255,255,0.4)" flexShrink={0}>
                 {user.profilePicUrl ? <img src={user.profilePicUrl} alt={user.name} style={{ width:"100%",height:"100%",objectFit:"cover" }} /> : <Avatar name={user.name} size="xl" bg="white" color={ORANGE} fontWeight="900" w="100%" h="100%" rounded="none" />}
               </Box>
-              <Box position="absolute" bottom={-1} right={-1} bg={GOLD} rounded="full" w="20px" h="20px" display="flex" alignItems="center" justifyContent="center">
-                <Text fontSize="10px">✨</Text>
-              </Box>
+              <Box position="absolute" bottom={-1} right={-1} bg={GOLD} rounded="full" w="20px" h="20px" display="flex" alignItems="center" justifyContent="center"><Text fontSize="10px">✨</Text></Box>
             </Box>
             <Box flex={1}>
-              <HStack spacing={2} mb={1}>
-                <Text fontSize="10px" fontWeight="800" color="rgba(255,255,255,0.5)" textTransform="uppercase" letterSpacing="widest">Spark Passport</Text>
-              </HStack>
+              <Text fontSize="10px" fontWeight="800" color="rgba(255,255,255,0.5)" textTransform="uppercase" letterSpacing="widest" mb={1}>Spark Passport</Text>
               <Text fontWeight="900" color="white" fontSize={{ base:"xl", md:"2xl" }} lineHeight={1.1}>{user.name}</Text>
               <Text color="rgba(255,255,255,0.7)" fontSize="sm">@{user.username}</Text>
               {user.bio && <Text fontSize="xs" color="rgba(255,255,255,0.8)" mt={1} lineHeight="tall" noOfLines={2}>{user.bio}</Text>}
             </Box>
           </Flex>
-
-          {/* Passport details grid */}
           <Box px={{ base:5, md:6 }} pb={4}>
             <Grid templateColumns="1fr 1fr" gap={2}>
-              {[
-                ["🌍 Location", [user.city, user.state, user.country].filter(Boolean).join(", ") || "—"],
-                ["💼 Occupation", user.occupation || "—"],
-                ["🎂 Age", age ? `${age}${user.showAge ? "" : " (private)"}` : "—"],
-                ["⚧ Gender", user.gender || "—"],
-              ].map(([label, value]) => (
+              {[["🌍 Location",[user.city,user.state,user.country].filter(Boolean).join(", ")||"—"],["💼 Occupation",user.occupation||"—"],["🎂 Age",age?`${age}${user.showAge?"":" (private)"}`:"—"],["⚧ Gender",user.gender||"—"]].map(([label,value])=>(
                 <Box key={label} bg="rgba(255,255,255,0.1)" rounded="xl" px={3} py={2}>
                   <Text fontSize="10px" color="rgba(255,255,255,0.5)" fontWeight="700">{label}</Text>
                   <Text fontSize="xs" color="white" fontWeight="700" noOfLines={1}>{value}</Text>
@@ -1425,19 +1601,11 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
               ))}
             </Grid>
           </Box>
-
-          {/* Great Beyond badge */}
-          <Box mx={{ base:5, md:6 }} mb={4} px={4} py={3} rounded="xl"
-            style={{ background:"linear-gradient(135deg,#1A0800 0%,#3D1200 100%)", border:`1.5px solid ${GOLD}`, boxShadow:`0 0 12px ${GOLD}44` }}>
-            <HStack spacing={2}>
-              <Text fontSize="16px" style={{ filter:"drop-shadow(0 0 5px gold)" }}>✨</Text>
-              <Box flex={1}><Text fontSize="xs" fontWeight="900" color={GOLD}>Member of the Great Spark Beyond</Text><Text fontSize="10px" color="rgba(255,255,255,0.6)">You are one of the true souls of Africa. 🤍</Text></Box>
-            </HStack>
+          <Box mx={{ base:5, md:6 }} mb={4} px={4} py={3} rounded="xl" style={{ background:"linear-gradient(135deg,#1A0800 0%,#3D1200 100%)", border:`1.5px solid ${GOLD}`, boxShadow:`0 0 12px ${GOLD}44` }}>
+            <HStack spacing={2}><Text fontSize="16px" style={{ filter:"drop-shadow(0 0 5px gold)" }}>✨</Text><Box flex={1}><Text fontSize="xs" fontWeight="900" color={GOLD}>Member of the Great Spark Beyond</Text><Text fontSize="10px" color="rgba(255,255,255,0.6)">You are one of the true souls of Africa. 🤍</Text></Box></HStack>
           </Box>
-
-          {/* Stats row */}
           <HStack px={{ base:5, md:6 }} pb={5} spacing={2}>
-            {[["Sparks",mySparks.length,"🎬"],["Reactions",totalReactions,"💪"],["Hi Connects",hiConnects.length,"👋"]].map(([l,v,e]) => (
+            {[["Sparks",mySparks.length,"🎬"],["Reactions",totalReactions,"💪"],["Messages",conversations.length,"💬"]].map(([l,v,e])=>(
               <Box key={l as string} textAlign="center" bg="rgba(255,255,255,0.12)" rounded="xl" px={3} py={2} flex={1}>
                 <Text fontSize="14px">{e}</Text><Text fontWeight="900" color="white" fontSize="lg">{v}</Text><Text fontSize="9px" color="rgba(255,255,255,0.7)">{l}</Text>
               </Box>
@@ -1446,8 +1614,6 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
               <TokenIcon size={14} /><Text fontWeight="900" color={BROWN} fontSize="lg">{user.coins}</Text><Text fontSize="9px" color={BROWN}>Tokens</Text>
             </Box>
           </HStack>
-
-          {/* Action buttons */}
           <Flex px={{ base:5, md:6 }} pb={5} gap={2}>
             <Button flex={1} size="sm" bg="rgba(255,255,255,0.15)" color="white" rounded="xl" fontWeight="700" border="1px solid rgba(255,255,255,0.25)" _hover={{ bg:"rgba(255,255,255,0.25)" }} onClick={onEdit}>✏️ Edit Profile</Button>
             <Button flex={1} size="sm" bg="rgba(255,0,0,0.15)" color="red.200" rounded="xl" fontWeight="700" border="1px solid rgba(255,100,100,0.3)" _hover={{ bg:"rgba(255,0,0,0.25)" }} onClick={onLogout}>🚪 Log Out</Button>
@@ -1455,25 +1621,66 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
         </Box>
       </Box>
 
-      {/* Hi Connects */}
+      {/* ── Messages ── */}
+      <Box px={4} mt={6}>
+        <Flex align="center" justify="space-between" mb={3}>
+          <Text fontSize="xs" fontWeight="800" color="gray.400" textTransform="uppercase" letterSpacing="wide">Messages</Text>
+          {totalUnread>0 && <Badge bg={ORANGE} color="white" rounded="full" fontSize="10px" px={2}>{totalUnread} new</Badge>}
+        </Flex>
+        {conversations.length===0 ? (
+          <Box bg="white" rounded="2xl" px={5} py={8} textAlign="center" border="1px solid" borderColor="orange.100">
+            <Text fontSize="32px" mb={2}>💬</Text>
+            <Text fontWeight="800" color={BROWN} mb={1}>No messages yet</Text>
+            <Text fontSize="sm" color="gray.400">Say Hi to someone's spark — when they say Hi back, you can start chatting here.</Text>
+          </Box>
+        ) : (
+          <VStack spacing={2}>
+            {conversations.map(({ partner, lastMsg, unread }) => {
+              const p = partnerInfo(partner);
+              const isMe = lastMsg.fromUsername===user.username;
+              const time = new Date(lastMsg.createdAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+              return (
+                <Flex key={partner} align="center" gap={3} bg="white" rounded="2xl" px={4} py={3} shadow="sm" border="1px solid" borderColor={unread?"orange.200":"orange.50"} cursor="pointer" onClick={()=>openChat(partner)} w="full" transition="all 0.15s" _hover={{ bg:"orange.50", borderColor:ORANGE }}>
+                  <Box position="relative" flexShrink={0}>
+                    <UserAvatar user={p} size="md" />
+                    {unread>0 && <Box position="absolute" top={-1} right={-1} w="10px" h="10px" bg={ORANGE} rounded="full" border="2px solid white" />}
+                  </Box>
+                  <Box flex={1} minW={0}>
+                    <Flex justify="space-between" align="baseline">
+                      <Text fontWeight={unread?"900":"700"} color={BROWN} fontSize="sm">{p.name}</Text>
+                      <Text fontSize="10px" color="gray.400">{time}</Text>
+                    </Flex>
+                    <Text fontSize="xs" color={unread?"gray.700":"gray.400"} fontWeight={unread?"600":"400"} noOfLines={1}>
+                      {isMe ? `You: ${lastMsg.content}` : lastMsg.content}
+                    </Text>
+                  </Box>
+                  {unread>0 && <Box w="20px" h="20px" bg={ORANGE} rounded="full" display="flex" alignItems="center" justifyContent="center" flexShrink={0}><Text color="white" fontSize="9px" fontWeight="900">{unread}</Text></Box>}
+                </Flex>
+              );
+            })}
+          </VStack>
+        )}
+      </Box>
+
+      {/* ── Hi Connects ── */}
       <Box px={4} mt={6}>
         <Text fontSize="xs" fontWeight="800" color="gray.400" textTransform="uppercase" letterSpacing="wide" mb={3}>Hi Connects</Text>
         {hiConnects.length===0 ? (
-          <Center py={10} flexDirection="column" gap={3}>
-            <Text fontSize="40px">👋</Text>
+          <Center py={8} flexDirection="column" gap={2}>
+            <Text fontSize="36px">👋</Text>
             <Text fontWeight="800" color={BROWN}>No Hi Connects yet</Text>
-            <Text fontSize="sm" color="gray.400" textAlign="center">When someone says hi to your spark, they appear here!</Text>
+            <Text fontSize="sm" color="gray.400" textAlign="center">When you say Hi to someone's spark, they appear here!</Text>
           </Center>
         ) : (
-          <VStack spacing={3}>
-            <Box w="full" bg="orange.50" rounded="xl" px={4} py={3} border="1px solid" borderColor="orange.100">
-              <Text fontSize="xs" color={BROWN} fontWeight="700">👋 These people said hi to your sparks — connect with them!</Text>
-            </Box>
+          <VStack spacing={2}>
             {hiConnects.map(c=>(
-              <Flex key={c.username} w="full" align="center" gap={3} bg="white" rounded="xl" px={4} py={3} shadow="sm" border="1px solid" borderColor="orange.100">
+              <Flex key={c.username} w="full" align="center" gap={3} bg="white" rounded="2xl" px={4} py={3} shadow="sm" border="1px solid" borderColor="orange.100">
                 <Box cursor="pointer" onClick={()=>setViewProfile(c.username)}><UserAvatar user={c} size="md" /></Box>
-                <Box flex={1} cursor="pointer" onClick={()=>setViewProfile(c.username)}><Text fontWeight="800" color={BROWN}>{c.name}</Text><Text fontSize="xs" color="gray.400">@{c.username} · Said hi to your spark 👋</Text></Box>
-                <Button size="sm" bg={ORANGE} color="white" rounded="full" fontWeight="700" _hover={{ bg:"#c44d16" }}>Say Hi Back</Button>
+                <Box flex={1} cursor="pointer" onClick={()=>setViewProfile(c.username)}>
+                  <Text fontWeight="800" color={BROWN} fontSize="sm">{c.name}</Text>
+                  <Text fontSize="xs" color="gray.400">@{c.username} · Said hi to your spark 👋</Text>
+                </Box>
+                <Button size="sm" bg={ORANGE} color="white" rounded="full" fontWeight="700" _hover={{ bg:"#c44d16" }} onClick={()=>openChat(c.username)}>Say Hi Back 💬</Button>
               </Flex>
             ))}
           </VStack>
