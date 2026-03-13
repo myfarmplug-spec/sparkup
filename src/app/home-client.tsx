@@ -124,7 +124,7 @@ const BIRTH_YEARS = Array.from({ length: CURRENT_YEAR - 1924 - 12 }, (_, i) => C
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface User {
-  id: string; name: string; username: string;
+  id: string; name: string; username: string; email: string;
   country: string; state: string; city: string;
   birthYear: number; gender: string; occupation: string;
   profilePicUrl: string; showAge: boolean; bio: string; coins: number;
@@ -162,7 +162,7 @@ async function uploadMedia(file: File, folder: string): Promise<string> {
 
 async function saveProfile(user: User) {
   await supabase.from("profiles").upsert({
-    id: user.id, name: user.name, username: user.username,
+    id: user.id, name: user.name, username: user.username, email: user.email,
     country: user.country, state: user.state, city: user.city,
     birth_year: user.birthYear, gender: user.gender, occupation: user.occupation,
     profile_pic_url: user.profilePicUrl, show_age: user.showAge,
@@ -174,7 +174,7 @@ async function fetchProfileByUsername(username: string): Promise<User | null> {
   const { data } = await supabase.from("profiles").select("*").eq("username", username).single();
   if (!data) return null;
   return {
-    id: data.id, name: data.name, username: data.username,
+    id: data.id, name: data.name, username: data.username, email: data.email ?? "",
     country: data.country ?? "", state: data.state ?? "", city: data.city ?? "",
     birthYear: data.birth_year ?? 0, gender: data.gender ?? "",
     occupation: data.occupation ?? "", profilePicUrl: data.profile_pic_url ?? "",
@@ -212,6 +212,24 @@ async function updateReactions(sparkId: number, reactions: Record<Reaction,numbe
 
 async function updateCoins(userId: string, coins: number) {
   await supabase.from("profiles").update({ coins }).eq("id", userId);
+}
+
+// ─── Email helper ─────────────────────────────────────────────────────────────
+async function sendEmail(
+  event: string,
+  to: string,
+  name: string,
+  username: string,
+  extra?: Record<string, string | number>
+) {
+  if (!to) return;
+  try {
+    await fetch("/api/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, to, name, username, extra }),
+    });
+  } catch { /* fire-and-forget — never block the UI */ }
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -418,6 +436,10 @@ function EditProfileModal({ isOpen, onClose, user, onSave }: { isOpen: boolean; 
       const updated: User = { ...user, name: name.trim(), username: username.trim().toLowerCase().replace(/\s+/g,""), birthYear: birthYear as number, gender, country, state: effectiveState, city: city.trim(), occupation: effectiveOccup, showAge, profilePicUrl: finalPicUrl, bio };
       await saveProfile(updated);
       localStorage.setItem("ca_user", JSON.stringify(updated));
+      sendEmail("profile_updated", updated.email, updated.name, updated.username, {
+        occupation: updated.occupation, country: updated.country,
+        state: updated.state, city: updated.city,
+      });
       onSave(updated);
       onClose();
       toast({ title:"Profile updated! ✨", status:"success", duration:2500, isClosable:true });
@@ -511,6 +533,7 @@ function SignUpScreen({ onDone }: {
   const [step,   setStep]   = useState<SignUpStep>("welcome");
   const [name,   setName]   = useState("");
   const [username,setUsername]=useState("");
+  const [email,  setEmail]  = useState("");
   const [birthYear,setBirthYear]=useState<number|"">("");
   const [gender, setGender] = useState("");
   const [country,setCountry]= useState("");
@@ -557,7 +580,8 @@ function SignUpScreen({ onDone }: {
     : "";
 
   const handleAboutNext = () => {
-    if (!name.trim()||!username.trim()||!birthYear||!gender||!country) { toast({ title:"Please fill in all required fields", status:"warning", duration:2500, isClosable:true }); return; }
+    if (!name.trim()||!username.trim()||!email.trim()||!birthYear||!gender||!country) { toast({ title:"Please fill in all required fields", status:"warning", duration:2500, isClosable:true }); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { toast({ title:"Please enter a valid email address", status:"warning", duration:2500, isClosable:true }); return; }
     if (usernameStatus==="taken") { toast({ title:"That username is already taken", description:"Try a different one!", status:"error", duration:2500, isClosable:true }); return; }
     if (usernameStatus==="checking"||usernameStatus==="idle") { toast({ title:"Please wait while we check your username", status:"info", duration:2000, isClosable:true }); return; }
     setStep("spark");
@@ -576,12 +600,13 @@ function SignUpScreen({ onDone }: {
       const bio = buildBio({ name: name.trim(), occupation: effectiveOccup, city, state: effectiveState, country, birthYear: birthYear as number, showAge: showAge && !!birthYear });
       const user: User = {
         id: uid(), name: name.trim(), username: username.trim().toLowerCase().replace(/\s+/g,""),
-        country, state: effectiveState, city, birthYear: birthYear as number,
-        gender, occupation: effectiveOccup, profilePicUrl: finalPicUrl,
-        showAge: showAge && !!birthYear, bio, coins: 1000,
+        email: email.trim().toLowerCase(), country, state: effectiveState, city,
+        birthYear: birthYear as number, gender, occupation: effectiveOccup,
+        profilePicUrl: finalPicUrl, showAge: showAge && !!birthYear, bio, coins: 1000,
       };
       await saveProfile(user);
       localStorage.setItem("ca_user", JSON.stringify(user));
+      sendEmail("welcome", user.email, user.name, user.username, { coins: user.coins });
       const introPost: Omit<SparkPost,"id"|"reactions"|"reactedBy"|"journeyId"> = {
         userId: user.id, name: user.name, username: user.username, profilePicUrl: finalPicUrl,
         caption: bio, mediaUrl: finalPicUrl, mediaType: "image", reach: "share", sparkType: "new",
@@ -604,6 +629,7 @@ function SignUpScreen({ onDone }: {
         toast({ title:"Username not found", status:"error", duration:2500, isClosable:true }); setSaving(false); return;
       }
       localStorage.setItem("ca_user", JSON.stringify(saved));
+      sendEmail("signin", saved.email, saved.name, saved.username);
       onDone(saved, false, null);
     } catch { toast({ title:"Sign in failed", status:"error", duration:2500, isClosable:true }); }
     setSaving(false);
@@ -671,6 +697,7 @@ function SignUpScreen({ onDone }: {
       <VStack spacing={4} mt={2}>
         <Button variant="ghost" color="gray.400" size="xs" alignSelf="flex-start" px={0} _hover={{ color:BROWN }} onClick={()=>setStep("welcome")}>← Back</Button>
         <Box w="full"><FieldLabel>Full name *</FieldLabel><Input placeholder="e.g. Amara Osei" value={name} onChange={e=>setName(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></Box>
+        <Box w="full"><FieldLabel>Email address *</FieldLabel><Input type="email" placeholder="e.g. amara@gmail.com" value={email} onChange={e=>setEmail(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></Box>
         <Box w="full">
           <FieldLabel>Username *</FieldLabel>
           <Input
@@ -835,6 +862,9 @@ function UploadForm({ user, sparks, onPost }: {
       };
       await saveSpark(spark);
       onPost(spark);
+      sendEmail("spark_posted", user.email, user.name, user.username, {
+        sparkType: spark.sparkType, reach: spark.reach, caption: spark.caption,
+      });
       setMediaFile(null); setMediaPreview(null); setCaption(""); setSparkType("new"); setLinkedSparkId(undefined); setReach("share");
       if (fileRef.current) fileRef.current.value="";
       toast({ title:"Your spark is live! 🔥", description:"Your community can see your spark. Keep shining! 🌍", status:"success", duration:4000, isClosable:true });
