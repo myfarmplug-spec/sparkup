@@ -589,90 +589,189 @@ function EditProfileModal({ isOpen, onClose, user, onSave }: { isOpen: boolean; 
 }
 
 // ─── Profile Passport Modal ───────────────────────────────────────────────────
-function ProfilePassportModal({ username, sparks, onClose }: { username:string|null; sparks:SparkPost[]; onClose:()=>void }) {
-  const [profile, setProfile] = useState<User|null>(null);
-  const [loading, setLoading] = useState(false);
+function ProfilePassportModal({ username, sparks, setSparks, currentUser, onClose }: {
+  username: string|null;
+  sparks: SparkPost[];
+  setSparks: React.Dispatch<React.SetStateAction<SparkPost[]>>;
+  currentUser: User;
+  onClose: () => void;
+}) {
+  const [profile,    setProfile]    = useState<User|null>(null);
+  const [loading,    setLoading]    = useState(false);
+  const [myReactions,setMyReactions]= useState<Record<number, Reaction[]>>({});
+  const [reactPeek,  setReactPeek]  = useState<{ sparkId:number; reaction:Reaction; names:string[] }|null>(null);
 
-  useEffect(()=>{
+  useEffect(() => {
     if (!username) return;
     setLoading(true);
-    fetchProfileByUsername(username).then(p=>{ setProfile(p); setLoading(false); });
-  },[username]);
+    fetchProfileByUsername(username).then(p => { setProfile(p); setLoading(false); });
+  }, [username]);
+
+  // Init reactions from DB state
+  useEffect(() => {
+    const initial: Record<number, Reaction[]> = {};
+    sparks.forEach(s => {
+      const mine = (Object.keys(s.reactedBy) as Reaction[]).filter(r => s.reactedBy[r]?.includes(currentUser.username));
+      if (mine.length) initial[s.id] = mine;
+    });
+    setMyReactions(initial);
+  }, [sparks, currentUser.username]);
+
+  const handleReact = (sparkId: number, reaction: Reaction) => {
+    const current = myReactions[sparkId] ?? [];
+    const alreadyReacted = current.includes(reaction);
+    setMyReactions(r => ({ ...r, [sparkId]: alreadyReacted ? current.filter(x=>x!==reaction) : [...current, reaction] }));
+    setSparks(posts => posts.map(s => {
+      if (s.id !== sparkId) return s;
+      const reactions = { ...s.reactions };
+      const reactedBy = { ...s.reactedBy };
+      if (alreadyReacted) {
+        reactions[reaction] = Math.max(0, reactions[reaction] - 1);
+        reactedBy[reaction] = reactedBy[reaction].filter(u => u !== currentUser.username);
+      } else {
+        reactions[reaction] += 1;
+        reactedBy[reaction] = [...(reactedBy[reaction] || []), currentUser.username];
+      }
+      updateReactions(sparkId, reactions, reactedBy);
+      return { ...s, reactions, reactedBy };
+    }));
+  };
 
   if (!username) return null;
 
-  const userSparks = sparks.filter(s=>s.username===username);
-  const totalReactions = userSparks.reduce((sum,s)=>sum+Object.values(s.reactions).reduce((a,b)=>a+b,0),0);
-  const age = profile?.birthYear ? calcAge(profile.birthYear) : null;
+  const userSparks = sparks.filter(s => s.username === username);
+  const totalReactions = userSparks.reduce((sum,s) => sum + Object.values(s.reactions).reduce((a,b) => a+b, 0), 0);
+  const age = profile?.birthYear ? calcAge(profile.birthYear, profile.birthMonth, profile.birthDay) : null;
 
   return (
-    <Modal isOpen={!!username} onClose={onClose} isCentered size="sm" scrollBehavior="inside">
+    <Modal isOpen={!!username} onClose={onClose} size="md" scrollBehavior="inside" motionPreset="slideInBottom">
       <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(6px)" />
-      <ModalContent mx={4} rounded="2xl" overflow="hidden" bg={CREAM}>
-        <ModalCloseButton color={BROWN} zIndex={10} mt={1} />
+      <ModalContent mx={3} mb={0} mt={{ base:"auto", md:"auto" }} rounded="2xl" overflow="hidden" bg={CREAM} maxH="92vh">
+        <ModalCloseButton color="white" zIndex={10} mt={2} mr={2} bg="rgba(0,0,0,0.3)" rounded="full" size="sm" />
+
         {loading ? (
-          <Center py={16}><Spinner color={ORANGE} size="lg" /></Center>
+          <Center py={20}><Spinner color={ORANGE} size="xl" /></Center>
         ) : profile ? (
-          <Box>
-            {/* Passport header */}
-            <Box bg={`linear-gradient(135deg,${BROWN} 0%,#8B3A0F 55%,${ORANGE} 100%)`} px={5} pt={8} pb={6} position="relative">
+          <Box overflowY="auto">
+            {/* ── Passport header ── */}
+            <Box bg={`linear-gradient(135deg,${BROWN} 0%,#8B3A0F 55%,${ORANGE} 100%)`} px={5} pt={10} pb={5} position="relative">
               <Text fontSize="9px" color="rgba(255,255,255,0.45)" textTransform="uppercase" letterSpacing="widest" fontWeight="700" mb={3}>icreate.africa · Spark Passport</Text>
               <Flex gap={4} align="flex-start">
-                <Box w="72px" h="72px" rounded="xl" overflow="hidden" border="3px solid rgba(255,255,255,0.4)" flexShrink={0}>
+                <Box w="80px" h="80px" rounded="2xl" overflow="hidden" border="3px solid rgba(255,255,255,0.4)" flexShrink={0}>
                   {profile.profilePicUrl
-                    ? <img src={profile.profilePicUrl} alt={profile.name} style={{ width:"100%",height:"100%",objectFit:"cover" }} />
-                    : <Avatar name={profile.name} size="lg" bg={ORANGE} color="white" fontWeight="900" borderRadius="xl" />}
+                    ? <img src={profile.profilePicUrl} alt={profile.name} loading="lazy" style={{ width:"100%",height:"100%",objectFit:"cover" }} />
+                    : <Avatar name={profile.name} size="xl" bg={ORANGE} color="white" fontWeight="900" borderRadius="2xl" w="100%" h="100%" />}
                 </Box>
                 <Box flex={1} pt={1}>
-                  <Text color="white" fontWeight="900" fontSize="xl" lineHeight={1.2}>{profile.name}</Text>
+                  <Text color="white" fontWeight="900" fontSize="2xl" lineHeight={1.1}>{profile.name}</Text>
                   <Text color="rgba(255,255,255,0.65)" fontSize="sm">@{profile.username}</Text>
-                  {profile.occupation && <Text color="rgba(255,255,255,0.8)" fontSize="xs" mt={1} fontWeight="600">{profile.occupation}</Text>}
+                  {profile.occupation && <Text color="rgba(255,255,255,0.85)" fontSize="xs" mt={1} fontWeight="700">{profile.occupation}</Text>}
                 </Box>
               </Flex>
-              {/* Passport details row */}
-              <Flex mt={4} gap={2} flexWrap="wrap">
-                {[profile.country, profile.state, profile.city].filter(Boolean).map((v,i)=>(
-                  <Text key={i} fontSize="10px" color="rgba(255,255,255,0.6)" bg="rgba(255,255,255,0.1)" px={2} py={0.5} rounded="full">{v}</Text>
+              <Flex mt={3} gap={2} flexWrap="wrap">
+                {[profile.country, profile.state, profile.city].filter(Boolean).map((v,i) => (
+                  <Text key={i} fontSize="10px" color="rgba(255,255,255,0.7)" bg="rgba(255,255,255,0.15)" px={2} py={0.5} rounded="full">{v}</Text>
                 ))}
-                {age && <Text fontSize="10px" color="rgba(255,255,255,0.6)" bg="rgba(255,255,255,0.1)" px={2} py={0.5} rounded="full">Age {age}</Text>}
-                {profile.gender && <Text fontSize="10px" color="rgba(255,255,255,0.6)" bg="rgba(255,255,255,0.1)" px={2} py={0.5} rounded="full">{profile.gender}</Text>}
+                {age !== null && profile.showAge && <Text fontSize="10px" color="rgba(255,255,255,0.7)" bg="rgba(255,255,255,0.15)" px={2} py={0.5} rounded="full">Age {age}</Text>}
+                {profile.gender && <Text fontSize="10px" color="rgba(255,255,255,0.7)" bg="rgba(255,255,255,0.15)" px={2} py={0.5} rounded="full">{profile.gender}</Text>}
               </Flex>
             </Box>
-            {/* Stats bar */}
+
+            {/* ── Stats ── */}
             <Flex bg="white" px={5} py={3} justify="space-around" borderBottom="1px solid" borderColor="orange.100">
-              {[["Sparks",userSparks.length],["Reactions",totalReactions]].map(([l,v])=>(
+              {[["Sparks", userSparks.length], ["Reactions", totalReactions]].map(([l,v]) => (
                 <VStack key={l as string} spacing={0}>
-                  <Text fontWeight="900" color={BROWN} fontSize="lg">{v}</Text>
-                  <Text fontSize="10px" color="gray.400" fontWeight="600">{l}</Text>
+                  <Text fontWeight="900" color={BROWN} fontSize="xl">{v}</Text>
+                  <Text fontSize="10px" color="gray.400" fontWeight="700" textTransform="uppercase" letterSpacing="wide">{l}</Text>
                 </VStack>
               ))}
             </Flex>
-            {/* Bio */}
+
+            {/* ── Bio ── */}
             {profile.bio && (
               <Box px={5} py={3} bg="white" borderBottom="1px solid" borderColor="orange.100">
-                <Text fontSize="xs" color="gray.600" lineHeight="tall">{profile.bio}</Text>
+                <Text fontSize="sm" color="gray.600" lineHeight="tall">{profile.bio}</Text>
               </Box>
             )}
-            {/* Recent sparks */}
-            {userSparks.length>0 && (
-              <Box px={5} py={4}>
-                <Text fontSize="10px" fontWeight="800" color="gray.400" textTransform="uppercase" letterSpacing="wide" mb={3}>Their Sparks</Text>
-                <VStack spacing={3}>
-                  {userSparks.slice(0,3).map(s=>(
-                    <Box key={s.id} w="full" bg="white" rounded="xl" overflow="hidden" shadow="sm" border="1px solid" borderColor="orange.100">
-                      {s.mediaType==="image"
-                        ? <img src={s.mediaUrl} alt="" style={{ width:"100%",height:"100px",objectFit:"cover" }} />
-                        : <Box h="100px" bg="#111" display="flex" alignItems="center" justifyContent="center"><Text fontSize="28px">🎬</Text></Box>}
-                      <Box px={3} py={2}><Text fontSize="xs" color="gray.600" noOfLines={2}>{s.caption}</Text></Box>
+
+            {/* ── Sparks feed ── */}
+            <Box px={4} py={4}>
+              {userSparks.length === 0 ? (
+                <Center py={10} flexDirection="column" gap={2}>
+                  <Text fontSize="32px">✨</Text>
+                  <Text fontSize="sm" color="gray.400" fontWeight="600">No sparks yet</Text>
+                </Center>
+              ) : (
+                <VStack spacing={4}>
+                  {userSparks.map(s => (
+                    <Box key={s.id} w="full" bg="white" rounded="2xl" shadow="sm" overflow="hidden" border="1px solid" borderColor="orange.100">
+                      <Box h="3px" bg={s.reach==="beyond"?GOLD:ORANGE} />
+                      {/* Spark media */}
+                      <SparkMedia mediaUrl={s.mediaUrl} mediaType={s.mediaType} maxH="380px" />
+                      {/* Caption */}
+                      <Box px={4} pt={3} pb={1}>
+                        <Text fontSize="sm" color="gray.800" fontWeight="500" lineHeight="tall">{s.caption}</Text>
+                      </Box>
+                      {/* Reaction peek drawer */}
+                      {reactPeek && reactPeek.sparkId===s.id && (
+                        <Box mx={4} mb={2} bg="gray.50" rounded="xl" px={4} py={3} border="1px solid" borderColor="orange.100">
+                          <Flex justify="space-between" align="center" mb={2}>
+                            <Text fontWeight="800" color={BROWN} fontSize="xs">
+                              {REACTIONS.find(r=>r.label===reactPeek.reaction)?.emoji} {reactPeek.reaction} · {reactPeek.names.length}
+                            </Text>
+                            <Button variant="ghost" size="xs" color="gray.400" onClick={()=>setReactPeek(null)}>✕</Button>
+                          </Flex>
+                          {reactPeek.names.length===0
+                            ? <Text fontSize="xs" color="gray.400">No one yet.</Text>
+                            : <Flex gap={2} flexWrap="wrap">{reactPeek.names.map(u => <Text key={u} fontSize="xs" bg="orange.50" px={2} py={0.5} rounded="full" color={BROWN} fontWeight="700">@{u}</Text>)}</Flex>}
+                        </Box>
+                      )}
+                      {/* Reactions */}
+                      {currentUser.username !== username && (
+                        <Flex px={4} pb={4} pt={2} gap={2} flexWrap="wrap">
+                          {REACTIONS.map(({ label, emoji }) => {
+                            const active = myReactions[s.id]?.includes(label) ?? false;
+                            return (
+                              <Button key={label} size="sm" rounded="full"
+                                bg={active?ORANGE:"orange.50"} color={active?"white":BROWN}
+                                border="1.5px solid" borderColor={active?ORANGE:"orange.200"}
+                                fontWeight="700" fontSize="xs" px={3}
+                                _hover={{ bg:active?"#c44d16":"orange.100" }} transition="all 0.15s"
+                                onClick={()=>handleReact(s.id, label)}>
+                                {emoji} {label}
+                                {s.reactions[label]>0 && (
+                                  <Text as="span" ml={1.5} fontWeight="900" cursor="pointer"
+                                    onClick={e=>{ e.stopPropagation(); setReactPeek({ sparkId:s.id, reaction:label, names:s.reactedBy[label]||[] }); }}>
+                                    {s.reactions[label]}
+                                  </Text>
+                                )}
+                              </Button>
+                            );
+                          })}
+                        </Flex>
+                      )}
+                      {/* Own sparks — just show counts */}
+                      {currentUser.username === username && (
+                        <Flex px={4} pb={4} pt={2} gap={2} flexWrap="wrap">
+                          {REACTIONS.filter(r=>s.reactions[r.label]>0).map(({ label, emoji }) => (
+                            <Flex key={label} align="center" gap={1} bg="orange.50" px={3} py={1} rounded="full"
+                              cursor="pointer" onClick={()=>setReactPeek({ sparkId:s.id, reaction:label, names:s.reactedBy[label]||[] })}>
+                              <Text fontSize="xs">{emoji}</Text>
+                              <Text fontSize="xs" fontWeight="800" color={BROWN}>{s.reactions[label]}</Text>
+                            </Flex>
+                          ))}
+                          {Object.values(s.reactions).every(v=>v===0) && <Text fontSize="xs" color="gray.400" px={1}>No reactions yet</Text>}
+                        </Flex>
+                      )}
                     </Box>
                   ))}
                 </VStack>
-              </Box>
-            )}
-            <Box h={4} />
+              )}
+            </Box>
+            <Box h={6} />
           </Box>
         ) : (
-          <Center py={12}><Text color="gray.400">Profile not found</Text></Center>
+          <Center py={16}><Text color="gray.400">Profile not found</Text></Center>
         )}
       </ModalContent>
     </Modal>
@@ -2005,7 +2104,7 @@ export default function HomeClient() {
         <GreatBeyondModal isOpen={tokensOpen} onClose={closeTokens} coins={user.coins} />
         <InviteModal     isOpen={inviteOpen} onClose={closeInvite} user={user} />
         <EditProfileModal isOpen={editOpen} onClose={closeEdit} user={user} onSave={handleEditSave} />
-        <ProfilePassportModal username={viewProfile} sparks={sparks} onClose={()=>setViewProfile(null)} />
+        <ProfilePassportModal username={viewProfile} sparks={sparks} setSparks={setSparks} currentUser={user} onClose={()=>setViewProfile(null)} />
       </Box>
     </ChakraProvider>
   );
