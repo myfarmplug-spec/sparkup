@@ -377,7 +377,7 @@ function ReachSelector({ reach, setReach, onOpenBeyond }: { reach: Reach; setRea
 function InviteModal({ isOpen, onClose, user }: { isOpen: boolean; onClose: () => void; user: User }) {
   const toast = useToast();
   const code = user.username.slice(0,4).toUpperCase() + String(user.username.split("").reduce((a,c) => a+c.charCodeAt(0),0)).slice(-3);
-  const txt  = `Hey! I am on create.africa — a warm home for African creators. Come join us! https://create.africa?ref=${code}`;
+  const txt  = `Hey! I am on icreate.africa — Africa's platform for creators. Come join us! https://www.icreate.africa?ref=${code}`;
   const copy = () => navigator.clipboard.writeText(txt).then(() => toast({ title:"Invite copied!", status:"success", duration:2000, isClosable:true }));
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered size="sm">
@@ -392,7 +392,7 @@ function InviteModal({ isOpen, onClose, user }: { isOpen: boolean; onClose: () =
             </Box>
             <Text fontSize="xs" color="gray.400">Referral code: <Text as="span" fontWeight="900" color={ORANGE}>{code}</Text></Text>
             <VStack spacing={2} w="full">
-              <Button w="full" bg={ORANGE} color="white" fontWeight="800" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={() => navigator.share ? navigator.share({ title:"Join me on create.africa", text:txt }) : copy()}>Share Invite Link</Button>
+              <Button w="full" bg={ORANGE} color="white" fontWeight="800" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={() => navigator.share ? navigator.share({ title:"Join me on icreate.africa", text:txt }) : copy()}>Share Invite Link</Button>
               <Button w="full" variant="outline" borderColor={ORANGE} color={ORANGE} fontWeight="700" rounded="xl" _hover={{ bg:"orange.50" }} onClick={copy}>Copy Link</Button>
             </VStack>
           </VStack>
@@ -640,16 +640,15 @@ function SignUpScreen({ onDone }: {
   const FormShell = ({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle?: string }) => (
     <Box minH="100vh" bg={CREAM}>
       <Flex minH="100vh" direction={{ base:"column", lg:"row" }}>
-        <Box display={{ base:"none", lg:"flex" }} flex={1} flexDirection="column" justifyContent="center" alignItems="center" px={16}
+        <Box display={{ base:"none", lg:"flex" }} flex={1} flexDirection="column" justifyContent="center" alignItems="center" px={12}
           style={{ background:`linear-gradient(160deg,${BROWN} 0%,#8B3A0F 60%,${ORANGE} 100%)` }}>
-          <VStack spacing={6} maxW="380px" textAlign="center">
-            <CreateAfricaLogo size={80} />
-            <Heading color="white" fontSize="4xl" fontWeight="900" lineHeight={1.15}>Africa&apos;s home for creators.</Heading>
-            <Text color="rgba(255,255,255,0.8)" fontSize="lg" lineHeight="tall">Share your gift, your art, your voice. Let Africa celebrate you.</Text>
-            <Text fontSize="sm" color="rgba(255,255,255,0.5)" fontStyle="italic">&ldquo;Umuntu ngumuntu ngabantu&rdquo;</Text>
-            <HStack spacing={8} pt={4}>
-              {[["🌍","54+","countries"],["✨","1,000","free tokens"],["🔥","Free","forever"]].map(([e,v,l]) => (
-                <VStack key={l} spacing={0}><Text fontSize="lg">{e}</Text><Text color="white" fontWeight="900" fontSize="lg">{v}</Text><Text color="rgba(255,255,255,0.6)" fontSize="xs">{l}</Text></VStack>
+          <VStack spacing={5} maxW="320px" textAlign="center">
+            <CreateAfricaLogo size={64} />
+            <Heading color="white" fontSize="3xl" fontWeight="900" lineHeight={1.2}>Show your spark.</Heading>
+            <Text color="rgba(255,255,255,0.75)" fontSize="md" lineHeight="tall">Africa&apos;s platform for creators. Share your gift, connect with your people.</Text>
+            <HStack spacing={6} pt={2}>
+              {[["🌍","54+","countries"],["✨","1,000","tokens"],["🔥","Free","forever"]].map(([e,v,l]) => (
+                <VStack key={l} spacing={0}><Text fontSize="lg">{e}</Text><Text color="white" fontWeight="900" fontSize="md">{v}</Text><Text color="rgba(255,255,255,0.55)" fontSize="11px">{l}</Text></VStack>
               ))}
             </HStack>
           </VStack>
@@ -1245,7 +1244,7 @@ export default function HomeClient() {
       await saveSpark(spark);
       setSparks(prev => [spark, ...prev]);
       setTimeout(() => {
-        toast({ title:"🎉 Welcome to create.africa!", description:"You've received 1,000 free tokens — your gift from us. Your intro spark is live! 💛", status:"success", duration:6000, isClosable:true });
+        toast({ title:"🎉 Welcome to icreate.africa!", description:"You've received 1,000 free tokens — your gift from us. Your intro spark is live! 💛", status:"success", duration:6000, isClosable:true });
       }, 500);
     }
   };
@@ -1336,6 +1335,7 @@ export default function HomeClient() {
                   <Button w="full" size="sm" variant="outline" borderColor={ORANGE} color={ORANGE} rounded="xl" fontWeight="700" _hover={{ bg:"orange.50" }} onClick={openInvite}>🤝 Invite Friends</Button>
                   <Button w="full" size="sm" variant="ghost" color="gray.400" rounded="xl" fontWeight="700" _hover={{ bg:"red.50", color:"red.400" }} onClick={handleLogout}>🚪 Log Out</Button>
                 </VStack>
+                <Text fontSize="10px" color="gray.300" textAlign="center" mt={2}>Powered by DotXan Tech</Text>
               </Box>
             </GridItem>
 
@@ -1391,7 +1391,9 @@ export default function HomeClient() {
               {user.coins} tokens
             </Button>
           </Flex>
-          <Box pb={20}><MainContent /></Box>
+          <Box pb={24}><MainContent />
+            <Text fontSize="10px" color="gray.300" textAlign="center" pb={4}>Powered by DotXan Tech</Text>
+          </Box>
           <Box position="fixed" bottom={0} left={0} right={0} bg="white" borderTop="1px solid" borderColor="orange.100" zIndex={20} shadow="0 -2px 10px rgba(0,0,0,0.06)">
             <HStack spacing={0} maxW="600px" mx="auto">
               {NAV_ITEMS.map(item=>(

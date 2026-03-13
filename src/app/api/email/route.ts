@@ -24,7 +24,7 @@ const BROWN  = "#5C2D0E";
 function base(content: string) {
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>create.africa</title></head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>icreate.africa</title></head>
 <body style="margin:0;padding:0;background:#FDF4EE;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#FDF4EE;padding:40px 0;">
     <tr><td align="center">
@@ -33,8 +33,8 @@ function base(content: string) {
         <tr>
           <td style="background:linear-gradient(135deg,${BROWN} 0%,#8B3A0F 60%,${ORANGE} 100%);border-radius:20px 20px 0 0;padding:32px 40px;text-align:center;">
             <div style="font-size:32px;margin-bottom:6px;">🔥</div>
-            <div style="color:white;font-size:22px;font-weight:900;letter-spacing:-0.5px;">create.africa</div>
-            <div style="color:rgba(255,255,255,0.7);font-size:13px;margin-top:4px;">Africa's home for creators</div>
+            <div style="color:white;font-size:22px;font-weight:900;letter-spacing:-0.5px;">icreate.africa</div>
+            <div style="color:rgba(255,255,255,0.7);font-size:13px;margin-top:4px;">Show your spark</div>
           </td>
         </tr>
         <!-- Body -->
@@ -43,8 +43,9 @@ function base(content: string) {
             ${content}
             <hr style="border:none;border-top:1px solid #FDE8D8;margin:28px 0;">
             <p style="color:#aaa;font-size:12px;text-align:center;margin:0;">
-              You're receiving this because you joined <strong>create.africa</strong><br>
-              <a href="https://sparkup-rust.vercel.app" style="color:${ORANGE};text-decoration:none;">Visit the platform</a>
+              You're receiving this because you joined <strong>icreate.africa</strong><br>
+              <a href="https://www.icreate.africa" style="color:${ORANGE};text-decoration:none;">Visit the platform</a><br><br>
+              <span style="color:#ccc;font-size:11px;">Powered by DotXan Tech</span>
             </p>
           </td>
         </tr>
@@ -65,11 +66,11 @@ function templates(payload: EmailPayload): { subject: string; html: string } {
   switch (payload.event) {
     case "welcome":
       return {
-        subject: `🔥 Welcome to create.africa, ${name}!`,
+        subject: `🔥 Welcome to icreate.africa, ${name}!`,
         html: base(`
           <h1 style="color:${BROWN};font-size:26px;font-weight:900;margin:0 0 8px;">Welcome to the family, ${name}! 🌍</h1>
           <p style="color:#555;font-size:15px;line-height:1.7;margin:0 0 16px;">
-            Africa just got one spark brighter. Your account <strong style="color:${ORANGE};">@${username}</strong> is live and ready to shine.
+            Africa just got one spark brighter. Your account <strong style="color:${ORANGE};">@${username}</strong> is live and ready to spark.
           </p>
           <div style="background:#FDF4EE;border-radius:14px;padding:20px 24px;margin:20px 0;border-left:4px solid ${ORANGE};">
             <p style="margin:0;color:${BROWN};font-weight:700;font-size:14px;">Here's what you can do right now:</p>
@@ -81,7 +82,7 @@ function templates(payload: EmailPayload): { subject: string; html: string } {
             </ul>
           </div>
           <p style="text-align:center;">${btn("🔥 Go to my Spark Feed")}</p>
-          <p style="color:#888;font-size:13px;text-align:center;font-style:italic;">"Umuntu ngumuntu ngabantu" — We are because of each other.</p>
+          <p style="color:#888;font-size:13px;text-align:center;font-style:italic;">Show your spark. Africa is watching. 🌍</p>
         `),
       };
 
@@ -91,13 +92,13 @@ function templates(payload: EmailPayload): { subject: string; html: string } {
         html: base(`
           <h1 style="color:${BROWN};font-size:26px;font-weight:900;margin:0 0 8px;">Good to see you back, ${name}! 👋</h1>
           <p style="color:#555;font-size:15px;line-height:1.7;margin:0 0 16px;">
-            You just signed into <strong style="color:${ORANGE};">@${username}</strong> on create.africa.
+            You just signed into <strong style="color:${ORANGE};">@${username}</strong> on icreate.africa.
             The community has been waiting for your spark. 🔥
           </p>
           <div style="background:#FDF4EE;border-radius:14px;padding:18px 24px;margin:20px 0;border-left:4px solid ${ORANGE};">
             <p style="margin:0;color:#555;font-size:14px;line-height:1.8;">
               📅 <strong>Signed in:</strong> ${new Date().toLocaleString("en-GB", { dateStyle:"full", timeStyle:"short" })}<br>
-              🌍 <strong>Platform:</strong> create.africa
+              🌍 <strong>Platform:</strong> icreate.africa
             </p>
           </div>
           <p style="color:#888;font-size:13px;">If this wasn't you, please contact us immediately.</p>
