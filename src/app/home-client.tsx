@@ -133,7 +133,9 @@ const OCCUPATIONS = [
   "Student","Teacher / Educator","Trader / Merchant","Other",
 ];
 const GENDERS    = ["Male","Female","Non-binary","Prefer not to say"];
-const BIRTH_YEARS = Array.from({ length: CURRENT_YEAR - 1924 - 12 }, (_, i) => CURRENT_YEAR - 13 - i);
+const BIRTH_YEARS  = Array.from({ length: CURRENT_YEAR - 1924 - 12 }, (_, i) => CURRENT_YEAR - 13 - i);
+const BIRTH_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const BIRTH_DAYS   = Array.from({ length: 31 }, (_, i) => i + 1);
 
 const GREETINGS = [
   { text: "Woku!", meaning: "Welcome", language: "Ikwerre", place: "Rivers State, Nigeria" },
@@ -154,7 +156,8 @@ const GREETINGS = [
 interface User {
   id: string; name: string; username: string; email: string; password: string;
   country: string; state: string; city: string;
-  birthYear: number; gender: string; occupation: string;
+  birthYear: number; birthMonth: number; birthDay: number;
+  gender: string; occupation: string;
   profilePicUrl: string; showAge: boolean; bio: string; coins: number;
 }
 interface SparkPost {
@@ -168,7 +171,12 @@ interface SparkPost {
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
-function calcAge(y: number) { return CURRENT_YEAR - y; }
+function calcAge(y: number, m = 0, d = 1) {
+  const today = new Date();
+  const age = today.getFullYear() - y;
+  const hasBirthdayPassed = today.getMonth() > m || (today.getMonth() === m && today.getDate() >= d);
+  return hasBirthdayPassed ? age : age - 1;
+}
 function getJourneyTotal(sparks: SparkPost[], journeyId: string) {
   return sparks.filter(s => s.journeyId === journeyId)
     .reduce((sum, s) => sum + Object.values(s.reactions).reduce((a, b) => a + b, 0), 0);
@@ -193,7 +201,8 @@ async function saveProfile(user: User) {
     id: user.id, name: user.name, username: user.username, email: user.email,
     password: user.password,
     country: user.country, state: user.state, city: user.city,
-    birth_year: user.birthYear, gender: user.gender, occupation: user.occupation,
+    birth_year: user.birthYear, birth_month: user.birthMonth, birth_day: user.birthDay,
+    gender: user.gender, occupation: user.occupation,
     profile_pic_url: user.profilePicUrl, show_age: user.showAge,
     bio: user.bio, coins: user.coins,
   });
@@ -206,7 +215,8 @@ async function fetchProfileByUsername(username: string): Promise<User | null> {
     id: data.id, name: data.name, username: data.username, email: data.email ?? "",
     password: data.password ?? "",
     country: data.country ?? "", state: data.state ?? "", city: data.city ?? "",
-    birthYear: data.birth_year ?? 0, gender: data.gender ?? "",
+    birthYear: data.birth_year ?? 0, birthMonth: data.birth_month ?? 0, birthDay: data.birth_day ?? 1,
+    gender: data.gender ?? "",
     occupation: data.occupation ?? "", profilePicUrl: data.profile_pic_url ?? "",
     showAge: data.show_age ?? true, bio: data.bio ?? "", coins: data.coins ?? 1000,
   };
@@ -665,7 +675,9 @@ function SignUpScreen({ onDone }: {
   const [forgotEmail,    setForgotEmail]    = useState("");
   const [customCity,     setCustomCity]     = useState("");
   const [citySelect,     setCitySelect]     = useState("");
-  const [birthYear,setBirthYear]=useState<number|"">("");
+  const [birthYear, setBirthYear] = useState<number|"">("");
+  const [birthMonth,setBirthMonth] = useState<number|"">("");
+  const [birthDay,  setBirthDay]   = useState<number|"">("");
   const [gender, setGender] = useState("");
   const [country,setCountry]= useState("");
   const [state,  setState]  = useState("");
@@ -706,13 +718,13 @@ function SignUpScreen({ onDone }: {
   const stateOptions   = country ? STATES_BY_COUNTRY[country] ?? null : null;
   const effectiveState = stateOptions ? state : customState;
   const effectiveOccup = occupation==="Other" ? customOccupation : occupation;
-  const age            = birthYear ? calcAge(birthYear as number) : null;
+  const age            = birthYear ? calcAge(birthYear as number, birthMonth as number, birthDay as number) : null;
   const introCaption   = name && effectiveOccup && country
     ? buildBio({ name, occupation: effectiveOccup, city, state: effectiveState, country, birthYear: birthYear as number, showAge: showAge && !!birthYear })
     : "";
 
   const handleAboutNext = () => {
-    if (!name.trim()||!username.trim()||!email.trim()||!birthYear||!gender||!country) { toast({ title:"Please fill in all required fields", status:"warning", duration:2500, isClosable:true }); return; }
+    if (!name.trim()||!username.trim()||!email.trim()||!birthYear||!birthMonth&&birthMonth!==0||!birthDay||!gender||!country) { toast({ title:"Please fill in all required fields", status:"warning", duration:2500, isClosable:true }); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { toast({ title:"Please enter a valid email address", status:"warning", duration:2500, isClosable:true }); return; }
     if (!password.trim() || password.length < 6) { toast({ title:"Password must be at least 6 characters", status:"warning", duration:2500, isClosable:true }); return; }
     if (password !== confirmPw) { toast({ title:"Passwords do not match", status:"error", duration:2500, isClosable:true }); return; }
@@ -736,7 +748,8 @@ function SignUpScreen({ onDone }: {
       const user: User = {
         id: uid(), name: name.trim(), username: username.trim().toLowerCase().replace(/\s+/g,""),
         email: email.trim().toLowerCase(), password: password.trim(), country, state: effectiveState, city: finalCity,
-        birthYear: birthYear as number, gender, occupation: effectiveOccup,
+        birthYear: birthYear as number, birthMonth: birthMonth as number, birthDay: birthDay as number,
+        gender, occupation: effectiveOccup,
         profilePicUrl: finalPicUrl, showAge: showAge && !!birthYear, bio, coins: 1000,
       };
       await saveProfile(user);
@@ -854,8 +867,8 @@ function SignUpScreen({ onDone }: {
         <Box w="full">
           <FieldLabel>Password</FieldLabel>
           <Box position="relative">
-            <Input type={showSigninPw?"text":"password"} placeholder="Your password" value={signinPassword} onChange={e=>setSigninPassword(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="48px" />
-            <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color="gray.400" onClick={()=>setShowSigninPw(p=>!p)} zIndex={1}>{showSigninPw?"🙈":"👁️"}</Button>
+            <Input type={showSigninPw?"text":"password"} placeholder="Your password" value={signinPassword} onChange={e=>setSigninPassword(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="56px" />
+            <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color={ORANGE} fontWeight="700" onClick={()=>setShowSigninPw(p=>!p)} zIndex={1}>{showSigninPw?"Hide":"Show"}</Button>
           </Box>
         </Box>
         <Flex w="full" justify="space-between" align="center">
@@ -896,15 +909,15 @@ function SignUpScreen({ onDone }: {
           <GridItem>
             <FieldLabel>Password *</FieldLabel>
             <Box position="relative">
-              <Input type={showPw?"text":"password"} placeholder="Min. 6 characters" value={password} onChange={e=>setPassword(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="48px" />
-              <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color="gray.400" onClick={()=>setShowPw(p=>!p)} zIndex={1}>{showPw?"🙈":"👁️"}</Button>
+              <Input type={showPw?"text":"password"} placeholder="Min. 6 characters" value={password} onChange={e=>setPassword(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="56px" />
+              <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color={ORANGE} fontWeight="700" onClick={()=>setShowPw(p=>!p)} zIndex={1}>{showPw?"Hide":"Show"}</Button>
             </Box>
           </GridItem>
           <GridItem>
             <FieldLabel>Confirm password *</FieldLabel>
             <Box position="relative">
-              <Input type={showConfirmPw?"text":"password"} placeholder="Repeat password" value={confirmPw} onChange={e=>setConfirmPw(e.target.value)} size="lg" border="2px solid" borderColor={confirmPw&&confirmPw!==password?"red.300":confirmPw&&confirmPw===password?"green.300":"orange.100"} _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="48px" />
-              <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color="gray.400" onClick={()=>setShowConfirmPw(p=>!p)} zIndex={1}>{showConfirmPw?"🙈":"👁️"}</Button>
+              <Input type={showConfirmPw?"text":"password"} placeholder="Repeat password" value={confirmPw} onChange={e=>setConfirmPw(e.target.value)} size="lg" border="2px solid" borderColor={confirmPw&&confirmPw!==password?"red.300":confirmPw&&confirmPw===password?"green.300":"orange.100"} _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="56px" />
+              <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color={ORANGE} fontWeight="700" onClick={()=>setShowConfirmPw(p=>!p)} zIndex={1}>{showConfirmPw?"Hide":"Show"}</Button>
             </Box>
             {confirmPw && confirmPw===password && <Text fontSize="xs" color="green.500" fontWeight="700" mt={1}>✓ Passwords match</Text>}
             {confirmPw && confirmPw!==password && <Text fontSize="xs" color="red.400" fontWeight="700" mt={1}>✗ Passwords don't match</Text>}
@@ -933,21 +946,27 @@ function SignUpScreen({ onDone }: {
             <Text fontSize="xs" color="red.500" fontWeight="700" mt={1}>😔 @{username} is already taken — try something else!</Text>
           )}
         </Box>
-        <Grid templateColumns="1fr 1fr" gap={3} w="full">
-          <GridItem>
-            <FieldLabel>Birth year *</FieldLabel>
+        <Box w="full">
+          <FieldLabel>Date of birth *</FieldLabel>
+          <Grid templateColumns="1fr 2fr 1fr" gap={2}>
+            <Select placeholder="Day" value={birthDay} onChange={e=>setBirthDay(e.target.value?Number(e.target.value):"")} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50">
+              {BIRTH_DAYS.map(d=><option key={d} value={d}>{d}</option>)}
+            </Select>
+            <Select placeholder="Month" value={birthMonth} onChange={e=>setBirthMonth(e.target.value?Number(e.target.value)-1:"")} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50">
+              {BIRTH_MONTHS.map((m,i)=><option key={m} value={i+1}>{m}</option>)}
+            </Select>
             <Select placeholder="Year" value={birthYear} onChange={e=>setBirthYear(e.target.value?Number(e.target.value):"")} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50">
               {BIRTH_YEARS.map(y=><option key={y} value={y}>{y}</option>)}
             </Select>
-            {age && <Text fontSize="xs" color={ORANGE} fontWeight="700" mt={1}>Age: {age}</Text>}
-          </GridItem>
-          <GridItem>
-            <FieldLabel>Gender *</FieldLabel>
-            <Select placeholder="Select" value={gender} onChange={e=>setGender(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50">
-              {GENDERS.map(g=><option key={g} value={g}>{g}</option>)}
-            </Select>
-          </GridItem>
-        </Grid>
+          </Grid>
+          {age !== null && age >= 0 && <Text fontSize="xs" color={ORANGE} fontWeight="700" mt={1}>🎂 Age: {age}</Text>}
+        </Box>
+        <Box w="full">
+          <FieldLabel>Gender *</FieldLabel>
+          <Select placeholder="Select" value={gender} onChange={e=>setGender(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50">
+            {GENDERS.map(g=><option key={g} value={g}>{g}</option>)}
+          </Select>
+        </Box>
         <Box w="full">
           <FieldLabel>Country *</FieldLabel>
           <Select placeholder="Select your country" value={country} onChange={e=>{ setCountry(e.target.value); setState(""); setCustomState(""); }} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50">
@@ -1495,14 +1514,37 @@ export default function HomeClient() {
     })();
   }, [loadSparks]);
 
-  // Realtime subscription for sparks
+  // Realtime subscription — surgical updates to avoid full refetch lag
   useEffect(() => {
+    function mapRow(r: Record<string, unknown>): SparkPost {
+      return {
+        id: r.id as number, userId: r.user_id as string, name: r.name as string,
+        username: r.username as string, profilePicUrl: (r.profile_pic_url ?? "") as string,
+        caption: r.caption as string, mediaUrl: r.media_url as string,
+        mediaType: r.media_type as MediaType, reach: r.reach as Reach,
+        reactions: r.reactions as Record<Reaction,number>,
+        reactedBy: r.reacted_by as Record<Reaction,string[]>,
+        sparkType: r.spark_type as SparkType, journeyId: r.journey_id as string,
+        linkedSparkId: (r.linked_spark_id ?? undefined) as number|undefined,
+      };
+    }
     const channel = supabase
       .channel("sparks-realtime")
-      .on("postgres_changes", { event:"*", schema:"public", table:"sparks" }, () => { loadSparks(); })
+      .on("postgres_changes", { event:"INSERT", schema:"public", table:"sparks" }, payload => {
+        const spark = mapRow(payload.new as Record<string,unknown>);
+        setSparks(prev => prev.some(s => s.id === spark.id) ? prev : [spark, ...prev]);
+      })
+      .on("postgres_changes", { event:"UPDATE", schema:"public", table:"sparks" }, payload => {
+        const updated = mapRow(payload.new as Record<string,unknown>);
+        setSparks(prev => prev.map(s => s.id === updated.id ? { ...s, reactions: updated.reactions, reactedBy: updated.reactedBy } : s));
+      })
+      .on("postgres_changes", { event:"DELETE", schema:"public", table:"sparks" }, payload => {
+        setSparks(prev => prev.filter(s => s.id !== (payload.old as {id:number}).id));
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [loadSparks]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Daily token
   useEffect(() => {
