@@ -682,6 +682,46 @@ function ProfilePassportModal({ username, sparks, onClose }: { username:string|n
 // ─── Sign Up Screen ───────────────────────────────────────────────────────────
 type SignUpStep = "welcome" | "about" | "spark" | "preview" | "signin" | "forgotpw";
 
+const STEP_PROGRESS: Record<SignUpStep, number> = { welcome:0, about:33, spark:66, preview:90, signin:0, forgotpw:0 };
+
+function FormShell({ children, title, subtitle, step }: {
+  children: React.ReactNode; title: string; subtitle?: string; step: SignUpStep;
+}) {
+  return (
+    <Box minH="100vh" bg={CREAM}>
+      <Flex minH="100vh" direction={{ base:"column", lg:"row" }}>
+        <Box display={{ base:"none", lg:"flex" }} flex={1} flexDirection="column" justifyContent="center" alignItems="center" px={12}
+          style={{ background:`linear-gradient(160deg,${BROWN} 0%,#8B3A0F 60%,${ORANGE} 100%)` }}>
+          <VStack spacing={5} maxW="320px" textAlign="center">
+            <CreateAfricaLogo size={64} />
+            <Heading color="white" fontSize="3xl" fontWeight="900" lineHeight={1.2}>Show your spark.</Heading>
+            <Text color="rgba(255,255,255,0.75)" fontSize="md" lineHeight="tall">Your gift belongs to Africa. Share it. Own it. Grow it.</Text>
+            <HStack spacing={6} pt={2}>
+              {[["🌍","54+","countries"],["✨","1,000","tokens"],["🔥","Free","forever"]].map(([e,v,l]) => (
+                <VStack key={l} spacing={0}><Text fontSize="lg">{e}</Text><Text color="white" fontWeight="900" fontSize="md">{v}</Text><Text color="rgba(255,255,255,0.55)" fontSize="11px">{l}</Text></VStack>
+              ))}
+            </HStack>
+          </VStack>
+        </Box>
+        <Flex flex={{ base:1, lg:"0 0 520px" }} direction="column" justify="center" align="center" px={{ base:5, sm:10 }} py={10} bg="white" overflowY="auto" minH={{ lg:"100vh" }}>
+          <Box w="full" maxW="420px">
+            <Box display={{ base:"block", lg:"none" }} mb={4} textAlign="center"><CreateAfricaLogo size={44} /></Box>
+            {step!=="welcome" && step!=="signin" && step!=="forgotpw" && (
+              <Box mb={5}>
+                <Progress value={STEP_PROGRESS[step]} size="xs" colorScheme="orange" rounded="full" mb={3} />
+                <Text fontSize="xs" color="gray.400" fontWeight="600">Step {step==="about"?1:step==="spark"?2:3} of 3</Text>
+              </Box>
+            )}
+            <Heading size="lg" color={BROWN} fontWeight="900" mb={0.5}>{title}</Heading>
+            {subtitle && <Text fontSize="sm" color="gray.400" mb={4}>{subtitle}</Text>}
+            {children}
+          </Box>
+        </Flex>
+      </Flex>
+    </Box>
+  );
+}
+
 function SignUpScreen({ onDone }: {
   onDone: (user: User, isNew: boolean, introPost: Omit<SparkPost,"id"|"reactions"|"reactedBy"|"journeyId">|null) => void
 }) {
@@ -830,44 +870,9 @@ function SignUpScreen({ onDone }: {
     setSaving(false);
   };
 
-  const stepProgress: Record<SignUpStep,number> = { welcome:0, about:33, spark:66, preview:90, signin:0, forgotpw:0 };
-
-  const FormShell = ({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle?: string }) => (
-    <Box minH="100vh" bg={CREAM}>
-      <Flex minH="100vh" direction={{ base:"column", lg:"row" }}>
-        <Box display={{ base:"none", lg:"flex" }} flex={1} flexDirection="column" justifyContent="center" alignItems="center" px={12}
-          style={{ background:`linear-gradient(160deg,${BROWN} 0%,#8B3A0F 60%,${ORANGE} 100%)` }}>
-          <VStack spacing={5} maxW="320px" textAlign="center">
-            <CreateAfricaLogo size={64} />
-            <Heading color="white" fontSize="3xl" fontWeight="900" lineHeight={1.2}>Show your spark.</Heading>
-            <Text color="rgba(255,255,255,0.75)" fontSize="md" lineHeight="tall">Your gift belongs to Africa. Share it. Own it. Grow it.</Text>
-            <HStack spacing={6} pt={2}>
-              {[["🌍","54+","countries"],["✨","1,000","tokens"],["🔥","Free","forever"]].map(([e,v,l]) => (
-                <VStack key={l} spacing={0}><Text fontSize="lg">{e}</Text><Text color="white" fontWeight="900" fontSize="md">{v}</Text><Text color="rgba(255,255,255,0.55)" fontSize="11px">{l}</Text></VStack>
-              ))}
-            </HStack>
-          </VStack>
-        </Box>
-        <Flex flex={{ base:1, lg:"0 0 520px" }} direction="column" justify="center" align="center" px={{ base:5, sm:10 }} py={10} bg="white" overflowY="auto" minH={{ lg:"100vh" }}>
-          <Box w="full" maxW="420px">
-            <Box display={{ base:"block", lg:"none" }} mb={4} textAlign="center"><CreateAfricaLogo size={44} /></Box>
-            {step!=="welcome"&&step!=="signin" && (
-              <Box mb={5}>
-                <Progress value={stepProgress[step]} size="xs" colorScheme="orange" rounded="full" mb={3} />
-                <Text fontSize="xs" color="gray.400" fontWeight="600">Step {step==="about"?1:step==="spark"?2:3} of 3</Text>
-              </Box>
-            )}
-            <Heading size="lg" color={BROWN} fontWeight="900" mb={0.5}>{title}</Heading>
-            {subtitle && <Text fontSize="sm" color="gray.400" mb={4}>{subtitle}</Text>}
-            {children}
-          </Box>
-        </Flex>
-      </Flex>
-    </Box>
-  );
 
   if (step==="welcome") return (
-    <FormShell title="Show your spark." subtitle="Africa's home for creators. Join free today.">
+    <FormShell title="Show your spark." subtitle="Africa's home for creators. Join free today." step={step}>
       <VStack spacing={4} mt={2}>
         <Box w="full" bg={CREAM} rounded="xl" px={4} py={3} border="1px solid" borderColor="orange.100" textAlign="center">
           <Text fontSize="xl" fontWeight="900" color={BROWN}>{greeting.text}</Text>
@@ -884,7 +889,7 @@ function SignUpScreen({ onDone }: {
   );
 
   if (step==="signin") return (
-    <FormShell title="Welcome back" subtitle="Your spark never goes out.">
+    <FormShell title="Welcome back" subtitle="Your spark never goes out." step={step}>
       <VStack spacing={4} mt={2}>
         <Button variant="ghost" color="gray.400" size="xs" alignSelf="flex-start" px={0} _hover={{ color:BROWN }} onClick={()=>setStep("welcome")}>← Back</Button>
         <Box w="full"><FieldLabel>Username</FieldLabel><Input placeholder="e.g. amaracreates" value={signinUsername} onChange={e=>setSigninUsername(e.target.value.toLowerCase().replace(/\s+/g,""))} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></Box>
@@ -910,7 +915,7 @@ function SignUpScreen({ onDone }: {
   );
 
   if (step==="forgotpw") return (
-    <FormShell title="Reset your password" subtitle="Enter the email you signed up with.">
+    <FormShell title="Reset your password" subtitle="Enter the email you signed up with." step={step}>
       <VStack spacing={4} mt={2}>
         <Button variant="ghost" color="gray.400" size="xs" alignSelf="flex-start" px={0} _hover={{ color:BROWN }} onClick={()=>setStep("signin")}>← Back to Sign In</Button>
         <Box w="full">
@@ -924,7 +929,7 @@ function SignUpScreen({ onDone }: {
   );
 
   if (step==="about") return (
-    <FormShell title="Tell us about you" subtitle="All required fields marked · takes under 2 minutes">
+    <FormShell title="Tell us about you" subtitle="All required fields marked · takes under 2 minutes" step={step}>
       <VStack spacing={4} mt={2}>
         <Button variant="ghost" color="gray.400" size="xs" alignSelf="flex-start" px={0} _hover={{ color:BROWN }} onClick={()=>setStep("welcome")}>← Back</Button>
         <Box w="full"><FieldLabel>Full name *</FieldLabel><Input placeholder="e.g. Amara Osei" value={name} onChange={e=>setName(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></Box>
@@ -1027,7 +1032,7 @@ function SignUpScreen({ onDone }: {
   );
 
   if (step==="spark") return (
-    <FormShell title="Your spark starts here" subtitle="Upload your profile photo — it becomes your first post!">
+    <FormShell title="Your spark starts here" subtitle="Upload your profile photo — it becomes your first post!" step={step}>
       <VStack spacing={4} mt={2}>
         <Button variant="ghost" color="gray.400" size="xs" alignSelf="flex-start" px={0} _hover={{ color:BROWN }} onClick={()=>setStep("about")}>← Back</Button>
         <Box w="full">
@@ -1067,7 +1072,7 @@ function SignUpScreen({ onDone }: {
 
   // Preview step
   return (
-    <FormShell title="Here's your intro! 🎉" subtitle="This is how Africa will meet you. Tap the button below when you're ready!">
+    <FormShell title="Here's your intro! 🎉" subtitle="This is how Africa will meet you. Tap the button below when you're ready!" step={step}>
       <VStack spacing={4} mt={2}>
         <Button variant="ghost" color="gray.400" size="xs" alignSelf="flex-start" px={0} _hover={{ color:BROWN }} onClick={()=>setStep("spark")}>← Back</Button>
         <Box w="full" bg="white" rounded="2xl" shadow="md" overflow="hidden" border="1px solid" borderColor="orange.100">
