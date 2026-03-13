@@ -524,8 +524,29 @@ function SignUpScreen({ onDone }: {
   const [picUrl, setPicUrl] = useState("");
   const [signinUsername,setSigninUsername]=useState("");
   const [saving, setSaving] = useState(false);
+  const [usernameStatus, setUsernameStatus] = useState<"idle"|"checking"|"available"|"taken">("idle");
   const picRef = useRef<HTMLInputElement>(null);
   const toast  = useToast();
+
+  const AVAILABLE_MSGS = [
+    "🔥 That's a fire username — it's all yours!",
+    "✨ Yes! @{u} is free. Claim it!",
+    "🎉 Nobody has @{u} yet — grab it now!",
+    "🌍 @{u} is available. Africa is waiting for you!",
+    "💥 That username slaps and it's yours for the taking!",
+    "🚀 @{u} is unclaimed — let's gooo!",
+  ];
+
+  useEffect(() => {
+    const raw = username.trim();
+    if (raw.length < 3) { setUsernameStatus("idle"); return; }
+    setUsernameStatus("checking");
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from("profiles").select("id").eq("username", raw).maybeSingle();
+      setUsernameStatus(data ? "taken" : "available");
+    }, 600);
+    return () => clearTimeout(t);
+  }, [username]);
 
   const stateOptions   = country ? STATES_BY_COUNTRY[country] ?? null : null;
   const effectiveState = stateOptions ? state : customState;
@@ -537,6 +558,8 @@ function SignUpScreen({ onDone }: {
 
   const handleAboutNext = () => {
     if (!name.trim()||!username.trim()||!birthYear||!gender||!country) { toast({ title:"Please fill in all required fields", status:"warning", duration:2500, isClosable:true }); return; }
+    if (usernameStatus==="taken") { toast({ title:"That username is already taken", description:"Try a different one!", status:"error", duration:2500, isClosable:true }); return; }
+    if (usernameStatus==="checking"||usernameStatus==="idle") { toast({ title:"Please wait while we check your username", status:"info", duration:2000, isClosable:true }); return; }
     setStep("spark");
   };
   const handleSparkNext = () => {
@@ -648,7 +671,29 @@ function SignUpScreen({ onDone }: {
       <VStack spacing={4} mt={2}>
         <Button variant="ghost" color="gray.400" size="xs" alignSelf="flex-start" px={0} _hover={{ color:BROWN }} onClick={()=>setStep("welcome")}>← Back</Button>
         <Box w="full"><FieldLabel>Full name *</FieldLabel><Input placeholder="e.g. Amara Osei" value={name} onChange={e=>setName(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></Box>
-        <Box w="full"><FieldLabel>Username *</FieldLabel><Input placeholder="e.g. amaracreates" value={username} onChange={e=>setUsername(e.target.value.toLowerCase().replace(/\s+/g,""))} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></Box>
+        <Box w="full">
+          <FieldLabel>Username *</FieldLabel>
+          <Input
+            placeholder="e.g. amaracreates"
+            value={username}
+            onChange={e=>setUsername(e.target.value.toLowerCase().replace(/\s+/g,""))}
+            size="lg"
+            border="2px solid"
+            borderColor={usernameStatus==="available"?"green.400":usernameStatus==="taken"?"red.400":"orange.100"}
+            _focus={{ borderColor:usernameStatus==="available"?"green.400":usernameStatus==="taken"?"red.400":ORANGE, boxShadow:"none" }}
+            rounded="xl"
+            bg={usernameStatus==="available"?"green.50":usernameStatus==="taken"?"red.50":"orange.50"}
+          />
+          {usernameStatus==="checking" && <Text fontSize="xs" color="gray.400" mt={1}>🔍 Checking availability…</Text>}
+          {usernameStatus==="available" && username.length>=3 && (
+            <Text fontSize="xs" color="green.600" fontWeight="700" mt={1}>
+              {AVAILABLE_MSGS[username.charCodeAt(0) % AVAILABLE_MSGS.length].replace("{u}", username)}
+            </Text>
+          )}
+          {usernameStatus==="taken" && (
+            <Text fontSize="xs" color="red.500" fontWeight="700" mt={1}>😔 @{username} is already taken — try something else!</Text>
+          )}
+        </Box>
         <Grid templateColumns="1fr 1fr" gap={3} w="full">
           <GridItem>
             <FieldLabel>Birth year *</FieldLabel>
