@@ -868,7 +868,7 @@ function SignUpScreen({ onDone }: {
           <FieldLabel>Password</FieldLabel>
           <Box position="relative">
             <Input type={showSigninPw?"text":"password"} placeholder="Your password" value={signinPassword} onChange={e=>setSigninPassword(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="56px" />
-            <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color={ORANGE} fontWeight="700" onClick={()=>setShowSigninPw(p=>!p)} zIndex={1}>{showSigninPw?"Hide":"Show"}</Button>
+            <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color="gray.400" onClick={()=>setShowSigninPw(p=>!p)} zIndex={1}>{showSigninPw?"🙈":"👁️"}</Button>
           </Box>
         </Box>
         <Flex w="full" justify="space-between" align="center">
@@ -910,14 +910,14 @@ function SignUpScreen({ onDone }: {
             <FieldLabel>Password *</FieldLabel>
             <Box position="relative">
               <Input type={showPw?"text":"password"} placeholder="Min. 6 characters" value={password} onChange={e=>setPassword(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="56px" />
-              <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color={ORANGE} fontWeight="700" onClick={()=>setShowPw(p=>!p)} zIndex={1}>{showPw?"Hide":"Show"}</Button>
+              <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color="gray.400" onClick={()=>setShowPw(p=>!p)} zIndex={1}>{showPw?"🙈":"👁️"}</Button>
             </Box>
           </GridItem>
           <GridItem>
             <FieldLabel>Confirm password *</FieldLabel>
             <Box position="relative">
               <Input type={showConfirmPw?"text":"password"} placeholder="Repeat password" value={confirmPw} onChange={e=>setConfirmPw(e.target.value)} size="lg" border="2px solid" borderColor={confirmPw&&confirmPw!==password?"red.300":confirmPw&&confirmPw===password?"green.300":"orange.100"} _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="56px" />
-              <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color={ORANGE} fontWeight="700" onClick={()=>setShowConfirmPw(p=>!p)} zIndex={1}>{showConfirmPw?"Hide":"Show"}</Button>
+              <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color="gray.400" onClick={()=>setShowConfirmPw(p=>!p)} zIndex={1}>{showConfirmPw?"🙈":"👁️"}</Button>
             </Box>
             {confirmPw && confirmPw===password && <Text fontSize="xs" color="green.500" fontWeight="700" mt={1}>✓ Passwords match</Text>}
             {confirmPw && confirmPw!==password && <Text fontSize="xs" color="red.400" fontWeight="700" mt={1}>✗ Passwords don't match</Text>}
