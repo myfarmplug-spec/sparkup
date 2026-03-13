@@ -1392,17 +1392,22 @@ function MySparkScreen({ user, sparks, onPost }: { user: User; sparks: SparkPost
 }
 
 // ─── Chats Screen ─────────────────────────────────────────────────────────────
-function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProfile }: {
+function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProfile, openedHiConnects, markHiOpened }: {
   user: User; sparks: SparkPost[];
   onOpenTokens: () => void; onEdit: () => void; onLogout: () => void;
   setViewProfile: (u:string)=>void;
+  openedHiConnects: Set<string>; markHiOpened: (u:string)=>void;
 }) {
   const mySparks        = sparks.filter(s=>s.userId===user.id);
   const totalReactions  = mySparks.reduce((sum,s)=>sum+Object.values(s.reactions).reduce((a,b)=>a+b,0),0);
-  const hiConnects      = sparks
-    .filter(s=>s.userId!==user.id && s.reactedBy["Say Hi"]?.includes(user.username))
-    .map(s=>({ name:s.name, username:s.username, profilePicUrl:s.profilePicUrl }))
-    .filter((v,i,arr)=>arr.findIndex(x=>x.username===v.username)===i);
+  // People who said Hi to MY sparks (correct direction)
+  const allHiers        = sparks
+    .filter(s => s.userId === user.id)
+    .flatMap(s => (s.reactedBy["Say Hi"] ?? []).map(uname => {
+      const p = sparks.find(x => x.username === uname);
+      return { name: p?.name ?? uname, username: uname, profilePicUrl: p?.profilePicUrl ?? "" };
+    }))
+    .filter((v, i, arr) => v.username !== user.username && arr.findIndex(x=>x.username===v.username)===i);
   const age             = user.birthYear ? calcAge(user.birthYear) : null;
 
   const [messages,    setMessages]    = useState<Message[]>([]);
@@ -1448,27 +1453,48 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
     return Array.from(map.values()).sort((a,b)=>b.lastMsg.id-a.lastMsg.id);
   })();
 
+  // Hi Connects = people who said hi to my sparks, NOT yet in any conversation, NOT already opened
+  const conversationPartners = new Set(conversations.map(c=>c.partner));
+  const hiConnects = allHiers.filter(h => !conversationPartners.has(h.username));
+
   const totalUnread = messages.filter(m=>m.toUsername===user.username && !m.read).length;
 
   const chatMessages = activeChat
     ? messages.filter(m=>(m.fromUsername===user.username&&m.toUsername===activeChat)||(m.fromUsername===activeChat&&m.toUsername===user.username)).sort((a,b)=>a.id-b.id)
     : [];
 
-  const openChat = (username: string) => {
+  const openChat = (username: string, fromHiConnect = false) => {
     setActiveChat(username);
-    // Mark as read locally + in DB
+    // Mark messages as read
     setMessages(prev=>prev.map(m=>m.fromUsername===username&&m.toUsername===user.username ? {...m,read:true} : m));
     markRead(username, user.username);
+    // Mark hi connect as opened so badge clears
+    if (fromHiConnect || allHiers.some(h=>h.username===username)) markHiOpened(username);
     setTimeout(()=>inputRef.current?.focus(), 100);
   };
 
   const handleSend = async () => {
     const content = msgText.trim();
     if (!content || !activeChat) return;
+    // Optimistic — show immediately so sender never wonders if it sent
+    const optimistic: Message = {
+      id: Date.now(), fromUsername: user.username, toUsername: activeChat,
+      content, read: false, createdAt: new Date().toISOString(),
+    };
+    setMessages(prev => [...prev, optimistic]);
     setMsgText(""); setSending(true);
     await sendMessage(user.username, activeChat, content);
+    // Refetch to replace optimistic with real DB record
+    const updated = await fetchMessages(user.username);
+    setMessages(updated);
     setSending(false);
     inputRef.current?.focus();
+    // Email notification when conversation hits 3 messages
+    const sentCount = updated.filter(m => m.fromUsername===user.username && m.toUsername===activeChat).length;
+    if (sentCount === 3) {
+      const { data } = await supabase.from("profiles").select("email,name,username").eq("username", activeChat).single();
+      if (data?.email) sendEmail("new_messages", data.email, data.name, data.username, { senderName: user.name, senderUsername: user.username, count: sentCount });
+    }
   };
 
   // Partner info helper
@@ -1605,7 +1631,7 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
             <HStack spacing={2}><Text fontSize="16px" style={{ filter:"drop-shadow(0 0 5px gold)" }}>✨</Text><Box flex={1}><Text fontSize="xs" fontWeight="900" color={GOLD}>Member of the Great Spark Beyond</Text><Text fontSize="10px" color="rgba(255,255,255,0.6)">You are one of the true souls of Africa. 🤍</Text></Box></HStack>
           </Box>
           <HStack px={{ base:5, md:6 }} pb={5} spacing={2}>
-            {[["Sparks",mySparks.length,"🎬"],["Reactions",totalReactions,"💪"],["Messages",conversations.length,"💬"]].map(([l,v,e])=>(
+            {[["Sparks",mySparks.length,"🎬"],["Reactions",totalReactions,"💪"],["Connections",allHiers.length,"👋"]].map(([l,v,e])=>(
               <Box key={l as string} textAlign="center" bg="rgba(255,255,255,0.12)" rounded="xl" px={3} py={2} flex={1}>
                 <Text fontSize="14px">{e}</Text><Text fontWeight="900" color="white" fontSize="lg">{v}</Text><Text fontSize="9px" color="rgba(255,255,255,0.7)">{l}</Text>
               </Box>
@@ -1662,42 +1688,54 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
         )}
       </Box>
 
-      {/* ── Hi Connects ── */}
-      <Box px={4} mt={6}>
-        <Text fontSize="xs" fontWeight="800" color="gray.400" textTransform="uppercase" letterSpacing="wide" mb={3}>Hi Connects</Text>
-        {hiConnects.length===0 ? (
-          <Center py={8} flexDirection="column" gap={2}>
-            <Text fontSize="36px">👋</Text>
-            <Text fontWeight="800" color={BROWN}>No Hi Connects yet</Text>
-            <Text fontSize="sm" color="gray.400" textAlign="center">When you say Hi to someone's spark, they appear here!</Text>
-          </Center>
-        ) : (
+      {/* ── New Hi's ── */}
+      {hiConnects.length > 0 && (
+        <Box px={4} mt={6}>
+          <Flex align="center" gap={2} mb={3}>
+            <Text fontSize="xs" fontWeight="800" color="gray.400" textTransform="uppercase" letterSpacing="wide">New — Said Hi to Your Spark</Text>
+            <Badge bg={ORANGE} color="white" rounded="full" fontSize="10px" px={2}>{hiConnects.length}</Badge>
+          </Flex>
           <VStack spacing={2}>
-            {hiConnects.map(c=>(
-              <Flex key={c.username} w="full" align="center" gap={3} bg="white" rounded="2xl" px={4} py={3} shadow="sm" border="1px solid" borderColor="orange.100">
-                <Box cursor="pointer" onClick={()=>setViewProfile(c.username)}><UserAvatar user={c} size="md" /></Box>
-                <Box flex={1} cursor="pointer" onClick={()=>setViewProfile(c.username)}>
-                  <Text fontWeight="800" color={BROWN} fontSize="sm">{c.name}</Text>
-                  <Text fontSize="xs" color="gray.400">@{c.username} · Said hi to your spark 👋</Text>
-                </Box>
-                <Button size="sm" bg={ORANGE} color="white" rounded="full" fontWeight="700" _hover={{ bg:"#c44d16" }} onClick={()=>openChat(c.username)}>Say Hi Back 💬</Button>
-              </Flex>
-            ))}
+            {hiConnects.map(c => {
+              const isNew = !openedHiConnects.has(c.username);
+              return (
+                <Flex key={c.username} align="center" gap={3} rounded="2xl" px={4} py={3} shadow="sm"
+                  border="1px solid" borderColor={isNew?"orange.300":"orange.100"}
+                  bg={isNew?"orange.50":"white"} w="full">
+                  <Box position="relative" cursor="pointer" onClick={()=>setViewProfile(c.username)}>
+                    <UserAvatar user={c} size="md" />
+                    {isNew && <Box position="absolute" top={-1} right={-1} w="10px" h="10px" bg={ORANGE} rounded="full" border="2px solid white" />}
+                  </Box>
+                  <Box flex={1} cursor="pointer" onClick={()=>setViewProfile(c.username)}>
+                    <Text fontWeight="800" color={BROWN} fontSize="sm">{c.name}</Text>
+                    <Text fontSize="xs" color="gray.400">@{c.username} · waved at your spark 👋</Text>
+                  </Box>
+                  <Button size="sm" bg={ORANGE} color="white" rounded="full" fontWeight="700" _hover={{ bg:"#c44d16" }}
+                    onClick={()=>openChat(c.username, true)}>
+                    Chat 💬
+                  </Button>
+                </Flex>
+              );
+            })}
           </VStack>
-        )}
-      </Box>
+        </Box>
+      )}
     </Box>
   );
 }
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function HomeClient() {
-  const [user,        setUser]        = useState<User|null>(null);
-  const [view,        setView]        = useState<View>("feed");
-  const [sparks,      setSparks]      = useState<SparkPost[]>([]);
-  const [loading,     setLoading]     = useState(true);
-  const [tasks,       setTasks]       = useState<Tasks>(DEFAULT_TASKS);
-  const [viewProfile, setViewProfile] = useState<string|null>(null);
+  const [user,             setUser]            = useState<User|null>(null);
+  const [view,             setView]            = useState<View>("feed");
+  const [sparks,           setSparks]          = useState<SparkPost[]>([]);
+  const [loading,          setLoading]         = useState(true);
+  const [tasks,            setTasks]           = useState<Tasks>(DEFAULT_TASKS);
+  const [viewProfile,      setViewProfile]     = useState<string|null>(null);
+  const [openedHiConnects, setOpenedHiConnects] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("ca_openedHi") ?? "[]")); }
+    catch { return new Set<string>(); }
+  });
   const { isOpen:tokensOpen,  onOpen:openTokens,  onClose:closeTokens  } = useDisclosure();
   const { isOpen:inviteOpen,  onOpen:openInvite,  onClose:closeInvite  } = useDisclosure();
   const { isOpen:editOpen,    onOpen:openEdit,    onClose:closeEdit    } = useDisclosure();
@@ -1814,7 +1852,23 @@ export default function HomeClient() {
     </ChakraProvider>
   );
 
-  const hiConnectCount = sparks.filter(s=>s.userId!==user.id && s.reactedBy["Say Hi"]?.includes(user.username)).length;
+  // People who said Hi to MY sparks — not yet opened
+  const hiConnectCount = (() => {
+    const hiers = sparks
+      .filter(s => s.userId === user.id)
+      .flatMap(s => s.reactedBy["Say Hi"] ?? [])
+      .filter((u, i, arr) => u !== user.username && arr.indexOf(u) === i);
+    return hiers.filter(u => !openedHiConnects.has(u)).length;
+  })();
+
+  const markHiOpened = (username: string) => {
+    setOpenedHiConnects(prev => {
+      const next = new Set(prev); next.add(username);
+      localStorage.setItem("ca_openedHi", JSON.stringify([...next]));
+      return next;
+    });
+  };
+
   const NAV_ITEMS: { id:View; emoji:string; label:string; badge?:number }[] = [
     { id:"feed",   emoji:"🏠", label:"Spark Feed" },
     { id:"mypark", emoji:"✨", label:"My Spark"   },
@@ -1825,7 +1879,7 @@ export default function HomeClient() {
     <>
       {view==="feed"   && <FeedScreen   user={user} sparks={sparks} setSparks={setSparks} onShowMySpark={()=>setView("mypark")} setViewProfile={setViewProfile} />}
       {view==="mypark" && <MySparkScreen user={user} sparks={sparks} onPost={handlePost} />}
-      {view==="chats"  && <ChatsScreen  user={user} sparks={sparks} onOpenTokens={openTokens} onEdit={openEdit} onLogout={handleLogout} setViewProfile={setViewProfile} />}
+      {view==="chats"  && <ChatsScreen  user={user} sparks={sparks} onOpenTokens={openTokens} onEdit={openEdit} onLogout={handleLogout} setViewProfile={setViewProfile} openedHiConnects={openedHiConnects} markHiOpened={markHiOpened} />}
     </>
   );
 

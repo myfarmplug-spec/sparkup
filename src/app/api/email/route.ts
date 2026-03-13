@@ -9,7 +9,8 @@ type EmailEvent =
   | "spark_posted"
   | "reaction_received"
   | "profile_updated"
-  | "password_reset";
+  | "password_reset"
+  | "new_messages";
 
 interface EmailPayload {
   event: EmailEvent;
@@ -164,6 +165,24 @@ function templates(payload: EmailPayload): { subject: string; html: string } {
             </p>
           </div>
           <p style="text-align:center;">${btn("View my Spark Passport")}</p>
+        `),
+      };
+
+    case "new_messages":
+      return {
+        subject: `💬 ${extra.senderName} is messaging you on icreate.africa!`,
+        html: base(`
+          <h1 style="color:${BROWN};font-size:26px;font-weight:900;margin:0 0 8px;">You've got messages! 💬</h1>
+          <p style="color:#555;font-size:15px;line-height:1.7;margin:0 0 16px;">
+            <strong style="color:${ORANGE};">@${extra.senderUsername}</strong> has sent you ${extra.count} messages on icreate.africa.
+            Don't leave them waiting — come reply! 🤍
+          </p>
+          <div style="background:#FDF4EE;border-radius:14px;padding:20px 24px;margin:20px 0;border-left:4px solid ${ORANGE};">
+            <p style="margin:0;color:${BROWN};font-weight:700;font-size:14px;">💬 ${extra.count} message${Number(extra.count)===1?"":"s"} waiting for you</p>
+            <p style="margin:8px 0 0;color:#555;font-size:13px;line-height:1.8;">From: <strong>${extra.senderName}</strong> (@${extra.senderUsername})</p>
+          </div>
+          <p style="color:#888;font-size:13px;text-align:center;">The conversation is live — jump back in and keep the spark going. 🔥</p>
+          <p style="text-align:center;">${btn("💬 Open Messages")}</p>
         `),
       };
 
