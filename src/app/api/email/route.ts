@@ -8,7 +8,8 @@ type EmailEvent =
   | "signin"
   | "spark_posted"
   | "reaction_received"
-  | "profile_updated";
+  | "profile_updated"
+  | "password_reset";
 
 interface EmailPayload {
   event: EmailEvent;
@@ -163,6 +164,23 @@ function templates(payload: EmailPayload): { subject: string; html: string } {
             </p>
           </div>
           <p style="text-align:center;">${btn("View my Spark Passport")}</p>
+        `),
+      };
+
+    case "password_reset":
+      return {
+        subject: `🔑 Your icreate.africa password`,
+        html: base(`
+          <h1 style="color:${BROWN};font-size:26px;font-weight:900;margin:0 0 8px;">Password Recovery 🔑</h1>
+          <p style="color:#555;font-size:15px;line-height:1.7;margin:0 0 16px;">
+            Hey <strong style="color:${ORANGE};">@${username}</strong>, here is your account password as requested.
+          </p>
+          <div style="background:#FDF4EE;border-radius:14px;padding:20px 24px;margin:20px 0;border-left:4px solid ${ORANGE};text-align:center;">
+            <p style="margin:0 0 8px;color:${BROWN};font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:1px;">Your password</p>
+            <p style="margin:0;color:${BROWN};font-size:24px;font-weight:900;letter-spacing:4px;">${extra.password}</p>
+          </div>
+          <p style="color:#888;font-size:13px;">For your security, consider changing your password after signing in.</p>
+          <p style="text-align:center;">${btn("🔥 Sign In Now")}</p>
         `),
       };
   }

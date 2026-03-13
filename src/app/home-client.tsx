@@ -113,6 +113,19 @@ const STATES_BY_COUNTRY: Record<string, string[]> = {
   Egypt:    ["Cairo","Alexandria","Giza","Luxor","Aswan","Port Said","Suez","Ismailia","Mansoura","Asyut","Sohag","Qena"],
   Senegal:  ["Dakar","Thiès","Saint-Louis","Kaolack","Ziguinchor","Tambacounda","Kolda","Louga","Fatick","Kaffrine"],
 };
+const CITIES_BY_COUNTRY: Record<string, string[]> = {
+  Nigeria: ["Abuja","Lagos","Port Harcourt","Kano","Ibadan","Benin City","Kaduna","Enugu","Calabar","Jos","Owerri","Warri","Uyo","Asaba","Akure","Abeokuta","Ado-Ekiti","Ilorin","Maiduguri","Zaria"],
+  Ghana: ["Accra","Kumasi","Tamale","Sekondi-Takoradi","Cape Coast","Sunyani","Ho","Koforidua","Wa","Bolgatanga"],
+  Kenya: ["Nairobi","Mombasa","Kisumu","Nakuru","Eldoret","Thika","Malindi","Kitale","Garissa","Nyeri"],
+  "South Africa": ["Johannesburg","Cape Town","Durban","Pretoria","Port Elizabeth","Bloemfontein","East London","Polokwane","Nelspruit","Kimberley"],
+  Ethiopia: ["Addis Ababa","Dire Dawa","Mekele","Gondar","Bahir Dar","Adama","Jimma","Jijiga","Hawassa","Shashamane"],
+  Tanzania: ["Dar es Salaam","Dodoma","Mwanza","Zanzibar City","Arusha","Mbeya","Morogoro","Tanga","Kigoma","Tabora"],
+  Uganda: ["Kampala","Gulu","Lira","Mbarara","Jinja","Mbale","Entebbe","Masaka","Kasese","Fort Portal"],
+  Cameroon: ["Yaoundé","Douala","Bamenda","Bafoussam","Garoua","Maroua","Ngaoundéré","Bertoua","Edéa","Kumba"],
+  Morocco: ["Casablanca","Rabat","Fes","Marrakech","Agadir","Tangier","Oujda","Kenitra","Tetouan","Safi"],
+  Egypt: ["Cairo","Alexandria","Giza","Shubra El-Kheima","Port Said","Suez","Mansoura","Tanta","Asyut","Ismailia"],
+  Senegal: ["Dakar","Touba","Thiès","Kaolack","Saint-Louis","Ziguinchor","Mbour","Rufisque","Diourbel","Louga"],
+};
 const OCCUPATIONS = [
   "Artist","Chef / Cook","Content Creator","Dancer","Designer (Fashion)","Designer (Graphic)",
   "Designer (Interior)","Doctor / Healthcare","Entrepreneur","Engineer","Farmer / Agriculture",
@@ -124,7 +137,7 @@ const BIRTH_YEARS = Array.from({ length: CURRENT_YEAR - 1924 - 12 }, (_, i) => C
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface User {
-  id: string; name: string; username: string; email: string;
+  id: string; name: string; username: string; email: string; password: string;
   country: string; state: string; city: string;
   birthYear: number; gender: string; occupation: string;
   profilePicUrl: string; showAge: boolean; bio: string; coins: number;
@@ -163,6 +176,7 @@ async function uploadMedia(file: File, folder: string): Promise<string> {
 async function saveProfile(user: User) {
   await supabase.from("profiles").upsert({
     id: user.id, name: user.name, username: user.username, email: user.email,
+    password: user.password,
     country: user.country, state: user.state, city: user.city,
     birth_year: user.birthYear, gender: user.gender, occupation: user.occupation,
     profile_pic_url: user.profilePicUrl, show_age: user.showAge,
@@ -175,6 +189,7 @@ async function fetchProfileByUsername(username: string): Promise<User | null> {
   if (!data) return null;
   return {
     id: data.id, name: data.name, username: data.username, email: data.email ?? "",
+    password: data.password ?? "",
     country: data.country ?? "", state: data.state ?? "", city: data.city ?? "",
     birthYear: data.birth_year ?? 0, gender: data.gender ?? "",
     occupation: data.occupation ?? "", profilePicUrl: data.profile_pic_url ?? "",
@@ -525,7 +540,7 @@ function EditProfileModal({ isOpen, onClose, user, onSave }: { isOpen: boolean; 
 }
 
 // ─── Sign Up Screen ───────────────────────────────────────────────────────────
-type SignUpStep = "welcome" | "about" | "spark" | "preview" | "signin";
+type SignUpStep = "welcome" | "about" | "spark" | "preview" | "signin" | "forgotpw";
 
 function SignUpScreen({ onDone }: {
   onDone: (user: User, isNew: boolean, introPost: Omit<SparkPost,"id"|"reactions"|"reactedBy"|"journeyId">|null) => void
@@ -534,6 +549,16 @@ function SignUpScreen({ onDone }: {
   const [name,   setName]   = useState("");
   const [username,setUsername]=useState("");
   const [email,  setEmail]  = useState("");
+  const [password,       setPassword]       = useState("");
+  const [confirmPw,      setConfirmPw]      = useState("");
+  const [showPw,         setShowPw]         = useState(false);
+  const [showConfirmPw,  setShowConfirmPw]  = useState(false);
+  const [signinPassword, setSigninPassword] = useState("");
+  const [showSigninPw,   setShowSigninPw]   = useState(false);
+  const [rememberMe,     setRememberMe]     = useState(true);
+  const [forgotEmail,    setForgotEmail]    = useState("");
+  const [customCity,     setCustomCity]     = useState("");
+  const [citySelect,     setCitySelect]     = useState("");
   const [birthYear,setBirthYear]=useState<number|"">("");
   const [gender, setGender] = useState("");
   const [country,setCountry]= useState("");
@@ -582,6 +607,8 @@ function SignUpScreen({ onDone }: {
   const handleAboutNext = () => {
     if (!name.trim()||!username.trim()||!email.trim()||!birthYear||!gender||!country) { toast({ title:"Please fill in all required fields", status:"warning", duration:2500, isClosable:true }); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { toast({ title:"Please enter a valid email address", status:"warning", duration:2500, isClosable:true }); return; }
+    if (!password.trim() || password.length < 6) { toast({ title:"Password must be at least 6 characters", status:"warning", duration:2500, isClosable:true }); return; }
+    if (password !== confirmPw) { toast({ title:"Passwords do not match", status:"error", duration:2500, isClosable:true }); return; }
     if (usernameStatus==="taken") { toast({ title:"That username is already taken", description:"Try a different one!", status:"error", duration:2500, isClosable:true }); return; }
     if (usernameStatus==="checking"||usernameStatus==="idle") { toast({ title:"Please wait while we check your username", status:"info", duration:2000, isClosable:true }); return; }
     setStep("spark");
@@ -597,10 +624,11 @@ function SignUpScreen({ onDone }: {
     setSaving(true);
     try {
       const finalPicUrl = picFile ? await uploadMedia(picFile, "profiles") : "";
-      const bio = buildBio({ name: name.trim(), occupation: effectiveOccup, city, state: effectiveState, country, birthYear: birthYear as number, showAge: showAge && !!birthYear });
+      const finalCity = CITIES_BY_COUNTRY[country] ? (citySelect === "Other" ? customCity : citySelect) : city;
+      const bio = buildBio({ name: name.trim(), occupation: effectiveOccup, city: finalCity, state: effectiveState, country, birthYear: birthYear as number, showAge: showAge && !!birthYear });
       const user: User = {
         id: uid(), name: name.trim(), username: username.trim().toLowerCase().replace(/\s+/g,""),
-        email: email.trim().toLowerCase(), country, state: effectiveState, city,
+        email: email.trim().toLowerCase(), password: password.trim(), country, state: effectiveState, city: finalCity,
         birthYear: birthYear as number, gender, occupation: effectiveOccup,
         profilePicUrl: finalPicUrl, showAge: showAge && !!birthYear, bio, coins: 1000,
       };
@@ -617,25 +645,48 @@ function SignUpScreen({ onDone }: {
   };
 
   const handleSignIn = async () => {
+    if (!signinPassword.trim()) { toast({ title:"Please enter your password", status:"warning", duration:2500, isClosable:true }); return; }
     setSaving(true);
     try {
       const saved = await fetchProfileByUsername(signinUsername.trim().toLowerCase());
       if (!saved) {
-        const raw = localStorage.getItem("ca_user");
-        if (raw) {
-          const local: User = JSON.parse(raw);
-          if (local.username === signinUsername.trim().toLowerCase()) { onDone(local, false, null); setSaving(false); return; }
-        }
         toast({ title:"Username not found", status:"error", duration:2500, isClosable:true }); setSaving(false); return;
       }
-      localStorage.setItem("ca_user", JSON.stringify(saved));
+      if (saved.password && saved.password !== signinPassword.trim()) {
+        toast({ title:"Incorrect password", description:"Check your password and try again.", status:"error", duration:3000, isClosable:true }); setSaving(false); return;
+      }
+      if (rememberMe) { localStorage.setItem("ca_user", JSON.stringify(saved)); }
+      else { sessionStorage.setItem("ca_user", JSON.stringify(saved)); }
       sendEmail("signin", saved.email, saved.name, saved.username);
       onDone(saved, false, null);
     } catch { toast({ title:"Sign in failed", status:"error", duration:2500, isClosable:true }); }
     setSaving(false);
   };
 
-  const stepProgress: Record<SignUpStep,number> = { welcome:0, about:33, spark:66, preview:90, signin:0 };
+  const handleForgotPassword = async () => {
+    if (!forgotEmail.trim()) { toast({ title:"Please enter your email address", status:"warning", duration:2500, isClosable:true }); return; }
+    setSaving(true);
+    try {
+      const { data } = await supabase.from("profiles").select("*").eq("email", forgotEmail.trim().toLowerCase()).single();
+      if (!data) { toast({ title:"No account found with that email", status:"error", duration:3000, isClosable:true }); setSaving(false); return; }
+      await fetch("/api/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: "password_reset",
+          to: data.email,
+          name: data.name,
+          username: data.username,
+          extra: { password: data.password },
+        }),
+      });
+      toast({ title:"Password sent! 📧", description:"Check your email inbox.", status:"success", duration:4000, isClosable:true });
+      setStep("signin");
+    } catch { toast({ title:"Something went wrong", status:"error", duration:3000, isClosable:true }); }
+    setSaving(false);
+  };
+
+  const stepProgress: Record<SignUpStep,number> = { welcome:0, about:33, spark:66, preview:90, signin:0, forgotpw:0 };
 
   const FormShell = ({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle?: string }) => (
     <Box minH="100vh" bg={CREAM}>
@@ -685,8 +736,38 @@ function SignUpScreen({ onDone }: {
     <FormShell title="Welcome back" subtitle="Your spark never goes out.">
       <VStack spacing={4} mt={2}>
         <Button variant="ghost" color="gray.400" size="xs" alignSelf="flex-start" px={0} _hover={{ color:BROWN }} onClick={()=>setStep("welcome")}>← Back</Button>
-        <Box w="full"><FieldLabel>Username</FieldLabel><Input placeholder="e.g. amaracreates" value={signinUsername} onChange={e=>setSigninUsername(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></Box>
+        <Box w="full"><FieldLabel>Username</FieldLabel><Input placeholder="e.g. amaracreates" value={signinUsername} onChange={e=>setSigninUsername(e.target.value.toLowerCase().replace(/\s+/g,""))} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></Box>
+        <Box w="full">
+          <FieldLabel>Password</FieldLabel>
+          <Box position="relative">
+            <Input type={showSigninPw?"text":"password"} placeholder="Your password" value={signinPassword} onChange={e=>setSigninPassword(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="48px" />
+            <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color="gray.400" onClick={()=>setShowSigninPw(p=>!p)} zIndex={1}>{showSigninPw?"🙈":"👁️"}</Button>
+          </Box>
+        </Box>
+        <Flex w="full" justify="space-between" align="center">
+          <Flex align="center" gap={2} cursor="pointer" onClick={()=>setRememberMe(r=>!r)}>
+            <Box w="18px" h="18px" rounded="md" border="2px solid" borderColor={rememberMe?ORANGE:"gray.300"} bg={rememberMe?ORANGE:"transparent"} display="flex" alignItems="center" justifyContent="center" flexShrink={0}>
+              {rememberMe && <Text color="white" fontSize="9px" fontWeight="900">✓</Text>}
+            </Box>
+            <Text fontSize="sm" color="gray.600" fontWeight="600">Remember me</Text>
+          </Flex>
+          <Button variant="ghost" size="xs" color={ORANGE} fontWeight="700" px={0} _hover={{ color:"#c44d16" }} onClick={()=>setStep("forgotpw")}>Forgot password?</Button>
+        </Flex>
         <Button w="full" size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={handleSignIn} isLoading={saving} loadingText="Signing in…">Sign In</Button>
+      </VStack>
+    </FormShell>
+  );
+
+  if (step==="forgotpw") return (
+    <FormShell title="Reset your password" subtitle="Enter the email you signed up with.">
+      <VStack spacing={4} mt={2}>
+        <Button variant="ghost" color="gray.400" size="xs" alignSelf="flex-start" px={0} _hover={{ color:BROWN }} onClick={()=>setStep("signin")}>← Back to Sign In</Button>
+        <Box w="full">
+          <FieldLabel>Email address</FieldLabel>
+          <Input type="email" placeholder="e.g. amara@gmail.com" value={forgotEmail} onChange={e=>setForgotEmail(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" />
+        </Box>
+        <Text fontSize="xs" color="gray.400" textAlign="center">We'll send your password to your registered email address.</Text>
+        <Button w="full" size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={handleForgotPassword} isLoading={saving} loadingText="Sending…">📧 Send my password</Button>
       </VStack>
     </FormShell>
   );
@@ -697,6 +778,24 @@ function SignUpScreen({ onDone }: {
         <Button variant="ghost" color="gray.400" size="xs" alignSelf="flex-start" px={0} _hover={{ color:BROWN }} onClick={()=>setStep("welcome")}>← Back</Button>
         <Box w="full"><FieldLabel>Full name *</FieldLabel><Input placeholder="e.g. Amara Osei" value={name} onChange={e=>setName(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></Box>
         <Box w="full"><FieldLabel>Email address *</FieldLabel><Input type="email" placeholder="e.g. amara@gmail.com" value={email} onChange={e=>setEmail(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></Box>
+        <Grid templateColumns="1fr 1fr" gap={3} w="full">
+          <GridItem>
+            <FieldLabel>Password *</FieldLabel>
+            <Box position="relative">
+              <Input type={showPw?"text":"password"} placeholder="Min. 6 characters" value={password} onChange={e=>setPassword(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="48px" />
+              <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color="gray.400" onClick={()=>setShowPw(p=>!p)} zIndex={1}>{showPw?"🙈":"👁️"}</Button>
+            </Box>
+          </GridItem>
+          <GridItem>
+            <FieldLabel>Confirm password *</FieldLabel>
+            <Box position="relative">
+              <Input type={showConfirmPw?"text":"password"} placeholder="Repeat password" value={confirmPw} onChange={e=>setConfirmPw(e.target.value)} size="lg" border="2px solid" borderColor={confirmPw&&confirmPw!==password?"red.300":confirmPw&&confirmPw===password?"green.300":"orange.100"} _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" pr="48px" />
+              <Button position="absolute" right={2} top="50%" transform="translateY(-50%)" variant="ghost" size="xs" color="gray.400" onClick={()=>setShowConfirmPw(p=>!p)} zIndex={1}>{showConfirmPw?"🙈":"👁️"}</Button>
+            </Box>
+            {confirmPw && confirmPw===password && <Text fontSize="xs" color="green.500" fontWeight="700" mt={1}>✓ Passwords match</Text>}
+            {confirmPw && confirmPw!==password && <Text fontSize="xs" color="red.400" fontWeight="700" mt={1}>✗ Passwords don't match</Text>}
+          </GridItem>
+        </Grid>
         <Box w="full">
           <FieldLabel>Username *</FieldLabel>
           <Input
@@ -749,7 +848,20 @@ function SignUpScreen({ onDone }: {
               {stateOptions ? <Select placeholder="Select state" value={state} onChange={e=>setState(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50">{stateOptions.map(s=><option key={s} value={s}>{s}</option>)}</Select>
                 : <Input placeholder="State or region" value={customState} onChange={e=>setCustomState(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" />}
             </GridItem>
-            <GridItem><FieldLabel>City / Town</FieldLabel><Input placeholder="e.g. Ikorodu" value={city} onChange={e=>setCity(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" /></GridItem>
+            <GridItem>
+              <FieldLabel>City / Town</FieldLabel>
+              {CITIES_BY_COUNTRY[country] ? (
+                <>
+                  <Select placeholder="Select city" value={citySelect} onChange={e=>{ setCitySelect(e.target.value); if(e.target.value!=="Other") setCustomCity(""); }} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50">
+                    {CITIES_BY_COUNTRY[country].map(c=><option key={c} value={c}>{c}</option>)}
+                    <option value="Other">Other (type below)</option>
+                  </Select>
+                  {citySelect==="Other" && <Input mt={2} placeholder="Enter your city" value={customCity} onChange={e=>setCustomCity(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" />}
+                </>
+              ) : (
+                <Input placeholder="e.g. Ikorodu" value={city} onChange={e=>setCity(e.target.value)} size="lg" border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" />
+              )}
+            </GridItem>
           </Grid>
         )}
         <Button w="full" size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={handleAboutNext}>Continue →</Button>

@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "create.africa — Show Your Spark",
+  title: "icreate.africa — Show Your Spark",
   description: "Upload your spark. Share your ideas, creations, and passions with Africa. Inspire millions.",
+  icons: { icon: "/logotransparent.png" },
 };
 
 export default function RootLayout({
