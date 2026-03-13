@@ -1130,16 +1130,34 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
   const [prevOpen,    setPrevOpen]    = useState<Record<number,boolean>>({});
   const [reactPeek,   setReactPeek]   = useState<{ sparkId:number; reaction:Reaction; names:string[] }|null>(null);
 
+  // Initialise from DB so reactions persist across page reloads
+  useEffect(() => {
+    const initial: Record<number,Reaction|null> = {};
+    sparks.forEach(s => {
+      const found = (Object.keys(s.reactedBy) as Reaction[]).find(r => s.reactedBy[r]?.includes(user.username));
+      if (found) initial[s.id] = found;
+    });
+    setMyReactions(initial);
+  }, [sparks, user.username]);
+
   const handleReact = async (sparkId: number, reaction: Reaction) => {
     const prev = myReactions[sparkId];
-    if (prev===reaction) return;
-    setMyReactions(r=>({ ...r, [sparkId]:reaction }));
+    const isUnreact = prev === reaction;   // clicking same reaction = remove it
+    setMyReactions(r => ({ ...r, [sparkId]: isUnreact ? null : reaction }));
     setSparks(posts => posts.map(s => {
-      if (s.id!==sparkId) return s;
-      const reactions  = { ...s.reactions  };
-      const reactedBy  = { ...s.reactedBy  };
-      if (prev) { reactions[prev] = Math.max(0,reactions[prev]-1); reactedBy[prev] = reactedBy[prev].filter(u=>u!==user.username); }
-      reactions[reaction] += 1; reactedBy[reaction] = [...(reactedBy[reaction]||[]), user.username];
+      if (s.id !== sparkId) return s;
+      const reactions = { ...s.reactions };
+      const reactedBy = { ...s.reactedBy };
+      // Remove previous (or same if unreacting)
+      if (prev) {
+        reactions[prev] = Math.max(0, reactions[prev] - 1);
+        reactedBy[prev] = reactedBy[prev].filter(u => u !== user.username);
+      }
+      // Add new reaction only if not unreacting
+      if (!isUnreact) {
+        reactions[reaction] += 1;
+        reactedBy[reaction] = [...(reactedBy[reaction] || []), user.username];
+      }
       updateReactions(sparkId, reactions, reactedBy);
       return { ...s, reactions, reactedBy };
     }));
