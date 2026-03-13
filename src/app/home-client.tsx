@@ -135,6 +135,21 @@ const OCCUPATIONS = [
 const GENDERS    = ["Male","Female","Non-binary","Prefer not to say"];
 const BIRTH_YEARS = Array.from({ length: CURRENT_YEAR - 1924 - 12 }, (_, i) => CURRENT_YEAR - 13 - i);
 
+const GREETINGS = [
+  { text: "Woku!", meaning: "Welcome", language: "Ikwerre", place: "Rivers State, Nigeria" },
+  { text: "Nno!", meaning: "Welcome", language: "Igbo", place: "South-East Nigeria" },
+  { text: "Ẹ káàbọ̀!", meaning: "Welcome", language: "Yoruba", place: "South-West Nigeria" },
+  { text: "Sannu da zuwa!", meaning: "Welcome", language: "Hausa", place: "Northern Nigeria" },
+  { text: "Akwaaba!", meaning: "Welcome", language: "Twi", place: "Ghana" },
+  { text: "Karibu!", meaning: "Welcome", language: "Swahili", place: "East Africa" },
+  { text: "Dumela!", meaning: "Welcome", language: "Setswana", place: "Botswana / South Africa" },
+  { text: "Sawubona!", meaning: "I see you — Welcome", language: "Zulu", place: "South Africa" },
+  { text: "Marhaba!", meaning: "Welcome", language: "Arabic", place: "North Africa" },
+  { text: "Ayikoo!", meaning: "Welcome, well done", language: "Luganda", place: "Uganda" },
+  { text: "Nnọọ!", meaning: "You are welcome", language: "Igbo", place: "Enugu, Nigeria" },
+  { text: "E wo!", meaning: "Welcome", language: "Ijaw", place: "Niger Delta, Nigeria" },
+];
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface User {
   id: string; name: string; username: string; email: string; password: string;
@@ -666,6 +681,7 @@ function SignUpScreen({ onDone }: {
   const [usernameStatus, setUsernameStatus] = useState<"idle"|"checking"|"available"|"taken">("idle");
   const picRef = useRef<HTMLInputElement>(null);
   const toast  = useToast();
+  const greeting = GREETINGS[Math.floor(Date.now() / 86400000) % GREETINGS.length];
 
   const AVAILABLE_MSGS = [
     "🔥 That's a fire username — it's all yours!",
@@ -787,7 +803,7 @@ function SignUpScreen({ onDone }: {
           <VStack spacing={5} maxW="320px" textAlign="center">
             <CreateAfricaLogo size={64} />
             <Heading color="white" fontSize="3xl" fontWeight="900" lineHeight={1.2}>Show your spark.</Heading>
-            <Text color="rgba(255,255,255,0.75)" fontSize="md" lineHeight="tall">Africa&apos;s platform for creators. Share your gift, connect with your people.</Text>
+            <Text color="rgba(255,255,255,0.75)" fontSize="md" lineHeight="tall">Your gift belongs to Africa. Share it. Own it. Grow it.</Text>
             <HStack spacing={6} pt={2}>
               {[["🌍","54+","countries"],["✨","1,000","tokens"],["🔥","Free","forever"]].map(([e,v,l]) => (
                 <VStack key={l} spacing={0}><Text fontSize="lg">{e}</Text><Text color="white" fontWeight="900" fontSize="md">{v}</Text><Text color="rgba(255,255,255,0.55)" fontSize="11px">{l}</Text></VStack>
@@ -795,17 +811,17 @@ function SignUpScreen({ onDone }: {
             </HStack>
           </VStack>
         </Box>
-        <Flex flex={{ base:1, lg:"0 0 520px" }} direction="column" justify="flex-start" align="center" px={{ base:5, sm:10 }} py={8} bg="white" overflowY="auto">
+        <Flex flex={{ base:1, lg:"0 0 520px" }} direction="column" justify="center" align="center" px={{ base:5, sm:10 }} py={10} bg="white" overflowY="auto" minH={{ lg:"100vh" }}>
           <Box w="full" maxW="420px">
-            <Box display={{ base:"block", lg:"none" }} mb={5} textAlign="center"><CreateAfricaLogo size={52} /></Box>
+            <Box display={{ base:"block", lg:"none" }} mb={4} textAlign="center"><CreateAfricaLogo size={44} /></Box>
             {step!=="welcome"&&step!=="signin" && (
               <Box mb={5}>
                 <Progress value={stepProgress[step]} size="xs" colorScheme="orange" rounded="full" mb={3} />
                 <Text fontSize="xs" color="gray.400" fontWeight="600">Step {step==="about"?1:step==="spark"?2:3} of 3</Text>
               </Box>
             )}
-            <Heading size="lg" color={BROWN} fontWeight="900" mb={1}>{title}</Heading>
-            {subtitle && <Text fontSize="sm" color="gray.400" mb={5}>{subtitle}</Text>}
+            <Heading size="lg" color={BROWN} fontWeight="900" mb={0.5}>{title}</Heading>
+            {subtitle && <Text fontSize="sm" color="gray.400" mb={4}>{subtitle}</Text>}
             {children}
           </Box>
         </Flex>
@@ -814,11 +830,18 @@ function SignUpScreen({ onDone }: {
   );
 
   if (step==="welcome") return (
-    <FormShell title="Karibu! Akwaaba!" subtitle="You belong here. Let Africa celebrate you. 🤍">
-      <VStack spacing={3} mt={2}>
-        <Button w="full" size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={()=>setStep("about")}>Join &amp; Show My Spark</Button>
+    <FormShell title="Show your spark." subtitle="Africa's home for creators. Join free today.">
+      <VStack spacing={4} mt={2}>
+        <Box w="full" bg={CREAM} rounded="xl" px={4} py={3} border="1px solid" borderColor="orange.100" textAlign="center">
+          <Text fontSize="xl" fontWeight="900" color={BROWN}>{greeting.text}</Text>
+          <Text fontSize="xs" color="gray.500" mt={0.5}>
+            <Text as="span" fontStyle="italic">&ldquo;{greeting.meaning}&rdquo;</Text>
+            {" "}— {greeting.language} · {greeting.place}
+          </Text>
+        </Box>
+        <Button w="full" size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={()=>setStep("about")}>Join &amp; Show My Spark 🔥</Button>
         <Button w="full" size="lg" variant="outline" borderColor={ORANGE} color={ORANGE} fontWeight="700" rounded="xl" _hover={{ bg:"orange.50" }} onClick={()=>setStep("signin")}>I already have an account</Button>
-        <Text textAlign="center" fontSize="11px" color="gray.400" pt={2}>Free to join · Built with love for Africa</Text>
+        <Text textAlign="center" fontSize="11px" color="gray.400" pt={1}>Free to join · Built with love for Africa 🤍</Text>
       </VStack>
     </FormShell>
   );
