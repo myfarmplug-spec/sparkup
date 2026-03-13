@@ -192,7 +192,7 @@ export async function POST(request: Request) {
     const { subject, html } = templates(payload);
 
     const { data, error } = await resend.emails.send({
-      from: "create.africa <onboarding@resend.dev>",
+      from: "icreate.africa <onboarding@resend.dev>",
       to: [payload.to],
       subject,
       html,

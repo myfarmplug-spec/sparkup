@@ -539,6 +539,97 @@ function EditProfileModal({ isOpen, onClose, user, onSave }: { isOpen: boolean; 
   );
 }
 
+// ─── Profile Passport Modal ───────────────────────────────────────────────────
+function ProfilePassportModal({ username, sparks, onClose }: { username:string|null; sparks:SparkPost[]; onClose:()=>void }) {
+  const [profile, setProfile] = useState<User|null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(()=>{
+    if (!username) return;
+    setLoading(true);
+    fetchProfileByUsername(username).then(p=>{ setProfile(p); setLoading(false); });
+  },[username]);
+
+  if (!username) return null;
+
+  const userSparks = sparks.filter(s=>s.username===username);
+  const totalReactions = userSparks.reduce((sum,s)=>sum+Object.values(s.reactions).reduce((a,b)=>a+b,0),0);
+  const age = profile?.birthYear ? calcAge(profile.birthYear) : null;
+
+  return (
+    <Modal isOpen={!!username} onClose={onClose} isCentered size="sm" scrollBehavior="inside">
+      <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(6px)" />
+      <ModalContent mx={4} rounded="2xl" overflow="hidden" bg={CREAM}>
+        <ModalCloseButton color={BROWN} zIndex={10} mt={1} />
+        {loading ? (
+          <Center py={16}><Spinner color={ORANGE} size="lg" /></Center>
+        ) : profile ? (
+          <Box>
+            {/* Passport header */}
+            <Box bg={`linear-gradient(135deg,${BROWN} 0%,#8B3A0F 55%,${ORANGE} 100%)`} px={5} pt={8} pb={6} position="relative">
+              <Text fontSize="9px" color="rgba(255,255,255,0.45)" textTransform="uppercase" letterSpacing="widest" fontWeight="700" mb={3}>icreate.africa · Spark Passport</Text>
+              <Flex gap={4} align="flex-start">
+                <Box w="72px" h="72px" rounded="xl" overflow="hidden" border="3px solid rgba(255,255,255,0.4)" flexShrink={0}>
+                  {profile.profilePicUrl
+                    ? <img src={profile.profilePicUrl} alt={profile.name} style={{ width:"100%",height:"100%",objectFit:"cover" }} />
+                    : <Avatar name={profile.name} size="lg" bg={ORANGE} color="white" fontWeight="900" borderRadius="xl" />}
+                </Box>
+                <Box flex={1} pt={1}>
+                  <Text color="white" fontWeight="900" fontSize="xl" lineHeight={1.2}>{profile.name}</Text>
+                  <Text color="rgba(255,255,255,0.65)" fontSize="sm">@{profile.username}</Text>
+                  {profile.occupation && <Text color="rgba(255,255,255,0.8)" fontSize="xs" mt={1} fontWeight="600">{profile.occupation}</Text>}
+                </Box>
+              </Flex>
+              {/* Passport details row */}
+              <Flex mt={4} gap={2} flexWrap="wrap">
+                {[profile.country, profile.state, profile.city].filter(Boolean).map((v,i)=>(
+                  <Text key={i} fontSize="10px" color="rgba(255,255,255,0.6)" bg="rgba(255,255,255,0.1)" px={2} py={0.5} rounded="full">{v}</Text>
+                ))}
+                {age && <Text fontSize="10px" color="rgba(255,255,255,0.6)" bg="rgba(255,255,255,0.1)" px={2} py={0.5} rounded="full">Age {age}</Text>}
+                {profile.gender && <Text fontSize="10px" color="rgba(255,255,255,0.6)" bg="rgba(255,255,255,0.1)" px={2} py={0.5} rounded="full">{profile.gender}</Text>}
+              </Flex>
+            </Box>
+            {/* Stats bar */}
+            <Flex bg="white" px={5} py={3} justify="space-around" borderBottom="1px solid" borderColor="orange.100">
+              {[["Sparks",userSparks.length],["Reactions",totalReactions]].map(([l,v])=>(
+                <VStack key={l as string} spacing={0}>
+                  <Text fontWeight="900" color={BROWN} fontSize="lg">{v}</Text>
+                  <Text fontSize="10px" color="gray.400" fontWeight="600">{l}</Text>
+                </VStack>
+              ))}
+            </Flex>
+            {/* Bio */}
+            {profile.bio && (
+              <Box px={5} py={3} bg="white" borderBottom="1px solid" borderColor="orange.100">
+                <Text fontSize="xs" color="gray.600" lineHeight="tall">{profile.bio}</Text>
+              </Box>
+            )}
+            {/* Recent sparks */}
+            {userSparks.length>0 && (
+              <Box px={5} py={4}>
+                <Text fontSize="10px" fontWeight="800" color="gray.400" textTransform="uppercase" letterSpacing="wide" mb={3}>Their Sparks</Text>
+                <VStack spacing={3}>
+                  {userSparks.slice(0,3).map(s=>(
+                    <Box key={s.id} w="full" bg="white" rounded="xl" overflow="hidden" shadow="sm" border="1px solid" borderColor="orange.100">
+                      {s.mediaType==="image"
+                        ? <img src={s.mediaUrl} alt="" style={{ width:"100%",height:"100px",objectFit:"cover" }} />
+                        : <Box h="100px" bg="#111" display="flex" alignItems="center" justifyContent="center"><Text fontSize="28px">🎬</Text></Box>}
+                      <Box px={3} py={2}><Text fontSize="xs" color="gray.600" noOfLines={2}>{s.caption}</Text></Box>
+                    </Box>
+                  ))}
+                </VStack>
+              </Box>
+            )}
+            <Box h={4} />
+          </Box>
+        ) : (
+          <Center py={12}><Text color="gray.400">Profile not found</Text></Center>
+        )}
+      </ModalContent>
+    </Modal>
+  );
+}
+
 // ─── Sign Up Screen ───────────────────────────────────────────────────────────
 type SignUpStep = "welcome" | "about" | "spark" | "preview" | "signin" | "forgotpw";
 
@@ -1029,13 +1120,15 @@ function UploadForm({ user, sparks, onPost }: {
 }
 
 // ─── Feed Screen ──────────────────────────────────────────────────────────────
-function FeedScreen({ user, sparks, setSparks, onShowMySpark }: {
+function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: {
   user: User; sparks: SparkPost[];
   setSparks: React.Dispatch<React.SetStateAction<SparkPost[]>>;
   onShowMySpark: () => void;
+  setViewProfile: (u:string)=>void;
 }) {
   const [myReactions, setMyReactions] = useState<Record<number,Reaction|null>>({});
   const [prevOpen,    setPrevOpen]    = useState<Record<number,boolean>>({});
+  const [reactPeek,   setReactPeek]   = useState<{ sparkId:number; reaction:Reaction; names:string[] }|null>(null);
 
   const handleReact = async (sparkId: number, reaction: Reaction) => {
     const prev = myReactions[sparkId];
@@ -1070,6 +1163,37 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark }: {
           <Button mt={2} bg={ORANGE} color="white" fontWeight="800" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={onShowMySpark}>Share My Spark</Button>
         </Center>
       )}
+      {reactPeek && (
+        <Box position="fixed" inset={0} zIndex={50} display="flex" alignItems="flex-end" justifyContent="center" bg="blackAlpha.400" onClick={()=>setReactPeek(null)}>
+          <Box bg="white" rounded="2xl" w="full" maxW="480px" mx={4} mb={6} overflow="hidden" onClick={e=>e.stopPropagation()}>
+            <Box h="4px" bg={ORANGE} />
+            <Box px={5} pt={4} pb={2}>
+              <Flex justify="space-between" align="center" mb={3}>
+                <Text fontWeight="900" color={BROWN} fontSize="md">
+                  {REACTIONS.find(r=>r.label===reactPeek.reaction)?.emoji} {reactPeek.reaction} — {reactPeek.names.length} {reactPeek.names.length===1?"person":"people"}
+                </Text>
+                <Button variant="ghost" size="xs" color="gray.400" onClick={()=>setReactPeek(null)}>✕</Button>
+              </Flex>
+              {reactPeek.names.length===0 ? (
+                <Text fontSize="sm" color="gray.400" pb={4}>No reactions yet.</Text>
+              ) : (
+                <VStack spacing={2} align="stretch" pb={4} maxH="260px" overflowY="auto">
+                  {reactPeek.names.map(uname=>{
+                    const poster = sparks.find(sp=>sp.username===uname);
+                    return (
+                      <Flex key={uname} align="center" gap={3} px={2} py={2} rounded="xl" bg="orange.50" cursor="pointer" onClick={()=>{ setViewProfile(uname); setReactPeek(null); }}>
+                        <UserAvatar user={{ name: poster?.name??uname, profilePicUrl: poster?.profilePicUrl??""}} size="sm" />
+                        <Box flex={1}><Text fontWeight="800" color={BROWN} fontSize="sm">{poster?.name??uname}</Text><Text fontSize="11px" color="gray.400">@{uname}</Text></Box>
+                        <Text fontSize="xs" color={ORANGE} fontWeight="700">View →</Text>
+                      </Flex>
+                    );
+                  })}
+                </VStack>
+              )}
+            </Box>
+          </Box>
+        </Box>
+      )}
       <VStack spacing={5} px={4} pb={8}>
         <AnimatePresence>
           {sparks.map(s => {
@@ -1079,8 +1203,8 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark }: {
               <MotionBox key={s.id} initial={{ opacity:0, y:-16 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, scale:0.95 }} transition={{ duration:0.3 }} w="full" bg="white" rounded="2xl" shadow="md" overflow="hidden">
                 <Box h="4px" bg={s.reach==="beyond"?GOLD:ORANGE} />
                 <Flex px={4} pt={4} pb={2} align="center" gap={3}>
-                  <UserAvatar user={{ name:s.name, profilePicUrl:s.profilePicUrl }} size="md" />
-                  <Box flex={1}><Text fontWeight="900" color={BROWN}>{s.name}</Text><Text fontSize="11px" color="gray.400">@{s.username}</Text></Box>
+                  <Box cursor="pointer" onClick={()=>setViewProfile(s.username)}><UserAvatar user={{ name:s.name, profilePicUrl:s.profilePicUrl }} size="md" /></Box>
+                  <Box flex={1} cursor="pointer" onClick={()=>setViewProfile(s.username)}><Text fontWeight="900" color={BROWN}>{s.name}</Text><Text fontSize="11px" color="gray.400">@{s.username}</Text></Box>
                   <HStack spacing={2} flexWrap="wrap" justify="flex-end">
                     <Text fontSize="xs" fontWeight="700" color={s.sparkType==="new"?ORANGE:BROWN} bg={s.sparkType==="new"?"orange.50":"gray.100"} px={2} py={0.5} rounded="full">
                       {s.sparkType==="new"?"New Spark":"Ongoing Spark"}
@@ -1117,7 +1241,13 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark }: {
                     const active = myReactions[s.id]===label;
                     return (
                       <Button key={label} size="sm" rounded="full" bg={active?ORANGE:"orange.50"} color={active?"white":BROWN} border="1.5px solid" borderColor={active?ORANGE:"orange.200"} fontWeight="700" fontSize="xs" px={3} _hover={{ bg:active?"#c44d16":"orange.100" }} transition="all 0.15s" onClick={()=>handleReact(s.id,label)}>
-                        {emoji} {label}{s.reactions[label]>0 && <Text as="span" ml={1.5} fontWeight="900">{s.reactions[label]}</Text>}
+                        {emoji} {label}
+                        {s.reactions[label]>0 && (
+                          <Text as="span" ml={1.5} fontWeight="900" cursor="pointer"
+                            onClick={e=>{ e.stopPropagation(); setReactPeek({ sparkId:s.id, reaction:label, names: s.reactedBy[label]||[] }); }}>
+                            {s.reactions[label]}
+                          </Text>
+                        )}
                       </Button>
                     );
                   })}
@@ -1180,9 +1310,10 @@ function MySparkScreen({ user, sparks, onPost }: { user: User; sparks: SparkPost
 }
 
 // ─── Chats Screen ─────────────────────────────────────────────────────────────
-function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout }: {
+function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProfile }: {
   user: User; sparks: SparkPost[];
   onOpenTokens: () => void; onEdit: () => void; onLogout: () => void;
+  setViewProfile: (u:string)=>void;
 }) {
   const mySparks   = sparks.filter(s=>s.userId===user.id);
   const totalReactions = mySparks.reduce((sum,s)=>sum+Object.values(s.reactions).reduce((a,b)=>a+b,0),0);
@@ -1280,8 +1411,8 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout }: {
             </Box>
             {hiConnects.map(c=>(
               <Flex key={c.username} w="full" align="center" gap={3} bg="white" rounded="xl" px={4} py={3} shadow="sm" border="1px solid" borderColor="orange.100">
-                <UserAvatar user={c} size="md" />
-                <Box flex={1}><Text fontWeight="800" color={BROWN}>{c.name}</Text><Text fontSize="xs" color="gray.400">@{c.username} · Said hi to your spark 👋</Text></Box>
+                <Box cursor="pointer" onClick={()=>setViewProfile(c.username)}><UserAvatar user={c} size="md" /></Box>
+                <Box flex={1} cursor="pointer" onClick={()=>setViewProfile(c.username)}><Text fontWeight="800" color={BROWN}>{c.name}</Text><Text fontSize="xs" color="gray.400">@{c.username} · Said hi to your spark 👋</Text></Box>
                 <Button size="sm" bg={ORANGE} color="white" rounded="full" fontWeight="700" _hover={{ bg:"#c44d16" }}>Say Hi Back</Button>
               </Flex>
             ))}
@@ -1294,11 +1425,12 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout }: {
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function HomeClient() {
-  const [user,   setUser]   = useState<User|null>(null);
-  const [view,   setView]   = useState<View>("feed");
-  const [sparks, setSparks] = useState<SparkPost[]>([]);
-  const [loading,setLoading]= useState(true);
-  const [tasks,  setTasks]  = useState<Tasks>(DEFAULT_TASKS);
+  const [user,        setUser]        = useState<User|null>(null);
+  const [view,        setView]        = useState<View>("feed");
+  const [sparks,      setSparks]      = useState<SparkPost[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [tasks,       setTasks]       = useState<Tasks>(DEFAULT_TASKS);
+  const [viewProfile, setViewProfile] = useState<string|null>(null);
   const { isOpen:tokensOpen,  onOpen:openTokens,  onClose:closeTokens  } = useDisclosure();
   const { isOpen:inviteOpen,  onOpen:openInvite,  onClose:closeInvite  } = useDisclosure();
   const { isOpen:editOpen,    onOpen:openEdit,    onClose:closeEdit    } = useDisclosure();
@@ -1401,9 +1533,9 @@ export default function HomeClient() {
 
   const MainContent = () => (
     <>
-      {view==="feed"   && <FeedScreen   user={user} sparks={sparks} setSparks={setSparks} onShowMySpark={()=>setView("mypark")} />}
+      {view==="feed"   && <FeedScreen   user={user} sparks={sparks} setSparks={setSparks} onShowMySpark={()=>setView("mypark")} setViewProfile={setViewProfile} />}
       {view==="mypark" && <MySparkScreen user={user} sparks={sparks} onPost={handlePost} />}
-      {view==="chats"  && <ChatsScreen  user={user} sparks={sparks} onOpenTokens={openTokens} onEdit={openEdit} onLogout={handleLogout} />}
+      {view==="chats"  && <ChatsScreen  user={user} sparks={sparks} onOpenTokens={openTokens} onEdit={openEdit} onLogout={handleLogout} setViewProfile={setViewProfile} />}
     </>
   );
 
@@ -1524,6 +1656,7 @@ export default function HomeClient() {
         <GreatBeyondModal isOpen={tokensOpen} onClose={closeTokens} coins={user.coins} />
         <InviteModal     isOpen={inviteOpen} onClose={closeInvite} user={user} />
         <EditProfileModal isOpen={editOpen} onClose={closeEdit} user={user} onSave={handleEditSave} />
+        <ProfilePassportModal username={viewProfile} sparks={sparks} onClose={()=>setViewProfile(null)} />
       </Box>
     </ChakraProvider>
   );
