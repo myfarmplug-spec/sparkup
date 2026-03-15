@@ -2135,49 +2135,67 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile, ta
   return (
     <Box>
       <Box display={{ base:"block", xl:"none" }} px={4} pt={4} pb={2}>
-        <Button w="full" size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="2xl" _hover={{ bg:"#c44d16" }} shadow="md" onClick={onShowMySpark}>✨ Show Your Spark</Button>
+        <Button w="full" size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="2xl" _hover={{ bg:"#c44d16" }} shadow="md" onClick={onShowMySpark}>🌍 Upload &amp; Show Yourself to the World</Button>
       </Box>
 
       {/* ── Great Spark Beyond Banner ─────────────────────────────────────── */}
-      <Box px={4} mt={{ base:4, xl:6 }} mb={4}>
+      <Box px={4} mt={{ base:4, xl:6 }} mb={2}>
         <MotionBox
           initial={{ opacity:0, y:-10 }} animate={{ opacity:1, y:0 }} transition={{ duration:0.4 }}
           bg="linear-gradient(135deg, #1a0a00 0%, #3d1a00 50%, #5C2D0E 100%)"
           rounded="2xl" overflow="hidden" shadow="xl" border="2px solid" borderColor={GOLD}
-          position="relative"
         >
-          {/* shimmer bar */}
           <Box h="4px" bg={`linear-gradient(90deg, ${GOLD}, #fff8dc, ${GOLD})`} />
-          <Box px={5} py={4}>
+          <Box px={5} pt={4} pb={2}>
             <Flex align="center" gap={2} mb={1}>
-              <Text fontSize="18px">🔒</Text>
-              <Text fontSize="11px" fontWeight="800" color={GOLD} textTransform="uppercase" letterSpacing="widest">Coming Soon</Text>
+              <Text fontSize="16px">🌍</Text>
+              <Text fontSize="10px" fontWeight="800" color={GOLD} textTransform="uppercase" letterSpacing="widest">Get Ready · April 5th, 2026</Text>
             </Flex>
             <Text fontWeight="900" color="white" fontSize={{ base:"xl", md:"2xl" }} lineHeight="short" mb={1}>
               ✨ The Great Spark Beyond
             </Text>
-            <Text fontWeight="800" color={GOLD} fontSize="sm" mb={3}>
-              Launching April 5th, 2026
+            <Text color="rgba(255,255,255,0.75)" fontSize="sm" fontWeight="600" lineHeight="tall" mb={3}>
+              Your moment to <Text as="span" color={GOLD} fontWeight="900">show yourself to the world</Text> is coming.
+              Upload more sparks now — every upload earns you <Text as="span" color={GOLD} fontWeight="900">views &amp; coins</Text>.
+              Use your coins on April 5th to{" "}
+              <Text as="span" color={GOLD} fontWeight="900">reach more people</Text> and{" "}
+              <Text as="span" color={GOLD} fontWeight="900">encourage someone</Text> across the globe.
             </Text>
-            <Box bg="rgba(255,255,255,0.07)" rounded="xl" px={4} py={3} mb={3} borderLeft="3px solid" borderColor={GOLD}>
-              <Text color="white" fontSize="sm" fontWeight="600" lineHeight="tall">
-                Keep sharing your sparks and earning coins! When The Great Spark Beyond launches,
-                use your coins to <Text as="span" color={GOLD} fontWeight="900">gain massive reach</Text> and{" "}
-                <Text as="span" color={GOLD} fontWeight="900">encourage others</Text> across the platform.
-              </Text>
-            </Box>
-            <Flex gap={3} flexWrap="wrap">
-              <Flex align="center" gap={2} bg="rgba(245,166,35,0.15)" rounded="full" px={3} py={1.5}>
-                <Text fontSize="14px">🔥</Text>
-                <Text fontSize="xs" fontWeight="800" color={GOLD}>Share Sparks → Earn Coins</Text>
-              </Flex>
-              <Flex align="center" gap={2} bg="rgba(245,166,35,0.15)" rounded="full" px={3} py={1.5}>
-                <Text fontSize="14px">🚀</Text>
-                <Text fontSize="xs" fontWeight="800" color={GOLD}>Coins → Greater Reach</Text>
-              </Flex>
-            </Flex>
+          </Box>
+          {/* How-it-works steps */}
+          <Box px={5} pb={4}>
+            <Grid templateColumns="1fr 1fr 1fr" gap={2}>
+              {[
+                { step:"1", icon:"🔥", title:"Upload Sparks", sub:"Show your story" },
+                { step:"2", icon:"👁️", title:"Get Views", sub:"Earn coins per view" },
+                { step:"3", icon:"🚀", title:"Use Coins", sub:"Reach the world" },
+              ].map(({ step, icon, title, sub }) => (
+                <Box key={step} bg="rgba(255,255,255,0.07)" rounded="xl" px={3} py={3} textAlign="center">
+                  <Text fontSize="20px" mb={1}>{icon}</Text>
+                  <Text fontSize="10px" fontWeight="900" color={GOLD} textTransform="uppercase" letterSpacing="wide">{title}</Text>
+                  <Text fontSize="10px" color="rgba(255,255,255,0.55)" fontWeight="600">{sub}</Text>
+                </Box>
+              ))}
+            </Grid>
           </Box>
         </MotionBox>
+      </Box>
+
+      {/* ── Coins balance nudge ───────────────────────────────────────────── */}
+      <Box px={4} mb={4}>
+        <Flex align="center" justify="space-between" bg="orange.50" rounded="xl" px={4} py={3} border="1.5px solid" borderColor="orange.200">
+          <Flex align="center" gap={2}>
+            <Text fontSize="18px">🪙</Text>
+            <Box>
+              <Text fontSize="xs" fontWeight="800" color={BROWN}>Your Coin Balance</Text>
+              <Text fontSize="10px" color="gray.400" fontWeight="600">Grows with every spark you share</Text>
+            </Box>
+          </Flex>
+          <Flex align="center" gap={1} bg={GOLD} px={3} py={1} rounded="full">
+            <Text fontSize="sm" fontWeight="900" color="white">{user.coins.toLocaleString()}</Text>
+            <Text fontSize="10px" color="white" fontWeight="700">coins</Text>
+          </Flex>
+        </Flex>
       </Box>
 
       <Flex align="center" gap={3} px={4} mb={4}>
@@ -2191,11 +2209,15 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile, ta
         </Button>
       </Flex>
       {sparks.filter(s => s.userId === user.id && s.userId !== "icreate-admin").length === 0 && (
-        <Center py={12} flexDirection="column" gap={3}>
-          <Text fontSize="48px">🌟</Text>
-          <Text fontWeight="800" color={BROWN} fontSize="lg">No sparks yet</Text>
-          <Text color="gray.400" fontSize="sm" textAlign="center" px={6}>Share your first spark to start earning coins for The Great Spark Beyond!</Text>
-          <Button mt={2} bg={ORANGE} color="white" fontWeight="800" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={onShowMySpark}>Share My Spark 🔥</Button>
+        <Center py={10} flexDirection="column" gap={3} px={4}>
+          <Text fontSize="52px">🌍</Text>
+          <Text fontWeight="900" color={BROWN} fontSize="lg" textAlign="center">The world is waiting for you!</Text>
+          <Text color="gray.500" fontSize="sm" textAlign="center" lineHeight="tall">
+            Upload your first spark, get views, earn coins — and be ready to{" "}
+            <Text as="span" fontWeight="800" color={ORANGE}>show yourself to the world</Text>{" "}
+            when The Great Spark Beyond launches April 5th.
+          </Text>
+          <Button mt={1} bg={ORANGE} color="white" fontWeight="900" rounded="xl" size="lg" _hover={{ bg:"#c44d16" }} onClick={onShowMySpark}>🔥 Upload Your First Spark</Button>
         </Center>
       )}
       {reactPeek && (
