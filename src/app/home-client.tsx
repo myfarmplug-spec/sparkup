@@ -2576,26 +2576,34 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile, ta
             const items: React.ReactElement[] = [];
             const now = Date.now();
 
-            // Broadcasts: match by userId OR username
+            // Admin official broadcasts
             const adminSparks = sparks.filter(s =>
               s.userId === "icreate-admin" || s.username === "icreate.africa"
             );
-            const broadcasts = adminSparks.filter(s =>
+            const officialBroadcasts = adminSparks.filter(s =>
               !hiddenSparks.has(s.id) &&
               (!s.broadcastExpiresAt || new Date(s.broadcastExpiresAt).getTime() > now) &&
               (!s.targetCountry || s.targetCountry === "" || s.targetCountry === user.country)
             );
 
+            // Boosted sparks from any user (admin-boosted via boost panel)
+            const boostedSparks = sparks.filter(s =>
+              s.broadcastFreqType === "pinned" &&
+              s.userId !== "icreate-admin" && s.username !== "icreate.africa" &&
+              !hiddenSparks.has(s.id)
+            );
+
             const visibleSparks = sparks.filter(s => {
               if (s.userId === "icreate-admin" || s.username === "icreate.africa") return false;
+              if (s.broadcastFreqType === "pinned") return false; // boosted — shown above
               if (hiddenSparks.has(s.id)) return false;
-              // Feed is locked to the current user's own sparks only
+              // Feed locked to current user's own sparks only
               if (s.userId !== user.id) return false;
               return true;
             });
 
-            // Pin all valid broadcasts at the top of the feed
-            broadcasts.forEach(b => {
+            // ── Official broadcasts at top ──
+            officialBroadcasts.forEach(b => {
               items.push(
                 <Box key={`bc-${b.id}`} w="full">
                   <MotionBox initial={{ opacity:0, y:-16 }} animate={{ opacity:1, y:0 }} transition={{ duration:0.3 }} w="full" bg="white" rounded="2xl" shadow="md" overflow="hidden" border="2px solid" borderColor="#059669">
@@ -2607,6 +2615,26 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile, ta
                     </Flex>
                     <SparkMedia mediaUrl={b.mediaUrl} mediaType={b.mediaType} maxH="500px" />
                     <Box px={4} pt={3} pb={4}><Text color="gray.800" fontWeight="600" fontSize="sm" lineHeight="tall">{b.caption}</Text></Box>
+                  </MotionBox>
+                </Box>
+              );
+            });
+
+            // ── Boosted user sparks ──
+            boostedSparks.forEach(b => {
+              items.push(
+                <Box key={`boost-${b.id}`} w="full">
+                  <MotionBox initial={{ opacity:0, y:-16 }} animate={{ opacity:1, y:0 }} transition={{ duration:0.3 }} w="full" bg="white" rounded="2xl" shadow="lg" overflow="hidden" border="2px solid" borderColor={GOLD}>
+                    <Box h="4px" bg={`linear-gradient(90deg,${GOLD},${ORANGE})`} />
+                    <Flex px={4} pt={3} pb={1} align="center" gap={2}>
+                      <Box w="28px" h="28px" rounded="full" overflow="hidden" border="1.5px solid" borderColor="orange.200" flexShrink={0}>
+                        {b.profilePicUrl ? <img src={b.profilePicUrl} style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : <Avatar name={b.name} size="xs" bg={ORANGE} color="white" />}
+                      </Box>
+                      <Box flex={1}><Text fontWeight="900" color={BROWN} fontSize="sm">{b.name}</Text><Text fontSize="10px" color="gray.400">@{b.username}</Text></Box>
+                      <Text fontSize="10px" fontWeight="800" color="white" bg={ORANGE} px={2} py={0.5} rounded="full">🚀 Boosted</Text>
+                    </Flex>
+                    <SparkMedia mediaUrl={b.mediaUrl} mediaType={b.mediaType} maxH="500px" />
+                    <Box px={4} pt={3} pb={4}><Text color="gray.800" fontWeight="600" fontSize="sm" lineHeight="tall">{b.caption ?? ""}</Text></Box>
                   </MotionBox>
                 </Box>
               );
