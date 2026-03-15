@@ -46,10 +46,13 @@ import {
   HStack, useToast, Flex, Avatar, AspectRatio, Center, Heading,
   Modal, ModalOverlay, ModalContent, ModalBody, ModalCloseButton,
   useDisclosure, Select, Divider, Badge, Grid, GridItem, Progress, Spinner,
+  Switch, FormControl, FormLabel,
 } from "@chakra-ui/react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@supabase/supabase-js";
+import IncidentReportModal from "@/components/IncidentReportModal";
+import AdminDashboard from "@/components/AdminDashboard";
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 const supabase = createClient(
@@ -74,7 +77,7 @@ type Reaction  = "Encourage" | "Say Hi" | "Applaud" | "Keep Going";
 type Reach     = "share" | "beyond";
 type SparkType = "new" | "ongoing";
 type MediaType = "video" | "image";
-type View      = "feed" | "mypark" | "chats";
+type View      = "feed" | "mypark" | "chats" | "admin";
 
 const REACTIONS: { label: Reaction; emoji: string }[] = [
   { label: "Encourage", emoji: "💪" },
@@ -159,6 +162,7 @@ interface User {
   birthYear: number; birthMonth: number; birthDay: number;
   gender: string; occupation: string;
   profilePicUrl: string; showAge: boolean; bio: string; coins: number;
+  isAdmin?: boolean;
 }
 interface SparkPost {
   id: number; userId: string; name: string; username: string;
@@ -167,6 +171,7 @@ interface SparkPost {
   reactions: Record<Reaction, number>;
   reactedBy: Record<Reaction, string[]>;
   sparkType: SparkType; journeyId: string; linkedSparkId?: number;
+  isAdminPost?: boolean; pinned?: boolean; adminPostType?: string;
 }
 interface Message {
   id: number; fromUsername: string; toUsername: string;
@@ -209,11 +214,12 @@ async function saveProfile(user: User) {
     gender: user.gender, occupation: user.occupation,
     profile_pic_url: user.profilePicUrl, show_age: user.showAge,
     bio: user.bio, coins: user.coins,
+    is_admin: user.isAdmin ?? false,
   });
 }
 
 async function fetchProfileByUsername(username: string): Promise<User | null> {
-  const { data } = await supabase.from("profiles").select("*").eq("username", username).single();
+  const { data } = await supabase.from("profiles").select("*").eq("username", username).maybeSingle();
   if (!data) return null;
   return {
     id: data.id, name: data.name, username: data.username, email: data.email ?? "",
@@ -223,6 +229,7 @@ async function fetchProfileByUsername(username: string): Promise<User | null> {
     gender: data.gender ?? "",
     occupation: data.occupation ?? "", profilePicUrl: data.profile_pic_url ?? "",
     showAge: data.show_age ?? true, bio: data.bio ?? "", coins: data.coins ?? 1000,
+    isAdmin: data.is_admin ?? false,
   };
 }
 
@@ -234,11 +241,14 @@ async function saveSpark(spark: SparkPost) {
     reach: spark.reach, spark_type: spark.sparkType, journey_id: spark.journeyId,
     linked_spark_id: spark.linkedSparkId ?? null,
     reactions: spark.reactions, reacted_by: spark.reactedBy,
+    is_admin_post: spark.isAdminPost ?? false,
+    pinned: spark.pinned ?? false,
+    admin_post_type: spark.adminPostType ?? 'regular',
   });
 }
 
 async function fetchSparks(): Promise<SparkPost[]> {
-  const { data } = await supabase.from("sparks").select("*").order("created_at", { ascending: false });
+  const { data } = await supabase.from("sparks").select("*").order("pinned", { ascending: false }).order("created_at", { ascending: false });
   if (!data) return [];
   return data.map(r => ({
     id: r.id, userId: r.user_id, name: r.name, username: r.username,
@@ -247,6 +257,9 @@ async function fetchSparks(): Promise<SparkPost[]> {
     reach: r.reach as Reach, reactions: r.reactions,
     reactedBy: r.reacted_by, sparkType: r.spark_type as SparkType,
     journeyId: r.journey_id, linkedSparkId: r.linked_spark_id ?? undefined,
+    isAdminPost: r.is_admin_post ?? false,
+    pinned: r.pinned ?? false,
+    adminPostType: r.admin_post_type ?? 'regular',
   }));
 }
 
@@ -317,6 +330,14 @@ function PersonIcon() {
   return (
     <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#CBD5E0" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+    </svg>
+  );
+}
+function VerifiedIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="10" fill="#3B82F6" />
+      <path d="M8 12l3 3 5-6" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -1206,10 +1227,13 @@ function UploadForm({ user, sparks, onPost }: {
   const [mediaType,    setMediaType]    = useState<MediaType>("video");
   const [reach,        setReach]        = useState<Reach>("share");
   const [posting,      setPosting]      = useState(false);
+  const [adminMode,    setAdminMode]    = useState(false);
+  const [pinPost,      setPinPost]      = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const toast   = useToast();
   const { isOpen:beyondOpen, onOpen:openBeyond, onClose:closeBeyond } = useDisclosure();
   const mySparks = sparks.filter(s => s.userId===user.id);
+  const isAdmin = (user as User & { isAdmin?: boolean }).isAdmin;
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if(!f) return;
@@ -1231,13 +1255,16 @@ function UploadForm({ user, sparks, onPost }: {
         reactions:  { Encourage:0, "Say Hi":0, Applaud:0, "Keep Going":0 },
         reactedBy:  { Encourage:[], "Say Hi":[], Applaud:[], "Keep Going":[] },
         sparkType, journeyId, linkedSparkId: sparkType==="ongoing"?linkedSparkId:undefined,
+        isAdminPost: isAdmin && adminMode,
+        pinned: isAdmin && pinPost,
+        adminPostType: isAdmin && adminMode ? 'official' : 'regular',
       };
       await saveSpark(spark);
       onPost(spark);
       sendEmail("spark_posted", user.email, user.name, user.username, {
         sparkType: spark.sparkType, reach: spark.reach, caption: spark.caption,
       });
-      setMediaFile(null); setMediaPreview(null); setCaption(""); setSparkType("new"); setLinkedSparkId(undefined); setReach("share");
+      setMediaFile(null); setMediaPreview(null); setCaption(""); setSparkType("new"); setLinkedSparkId(undefined); setReach("share"); setAdminMode(false); setPinPost(false);
       if (fileRef.current) fileRef.current.value="";
       toast({ title:"Your spark is live! 🔥", description:"Your community can see your spark. Keep shining! 🌍", status:"success", duration:4000, isClosable:true });
     } catch(e) { toast({ title:"Post failed", description:String(e), status:"error", duration:4000, isClosable:true }); }
@@ -1281,6 +1308,30 @@ function UploadForm({ user, sparks, onPost }: {
       )}
       <Textarea placeholder="Add a note about this spark…" value={caption} onChange={e=>setCaption(e.target.value)} rows={2} border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" resize="none" />
       <ReachSelector reach={reach} setReach={setReach} onOpenBeyond={openBeyond} />
+      {isAdmin && (
+        <Box w="full" bg="blue.50" rounded="xl" p={4} border="2px solid" borderColor="blue.200">
+          <Text fontSize="xs" fontWeight="800" color="blue.700" mb={3} textTransform="uppercase" letterSpacing="wide">Admin Options</Text>
+          <VStack spacing={3} align="stretch">
+            <FormControl display="flex" alignItems="center">
+              <FormLabel htmlFor="admin-mode" mb="0" fontSize="sm" fontWeight="700" color={BROWN} flex={1}>
+                Post as Official Admin
+              </FormLabel>
+              <Switch id="admin-mode" isChecked={adminMode} onChange={e=>setAdminMode(e.target.checked)} colorScheme="blue" />
+            </FormControl>
+            <FormControl display="flex" alignItems="center">
+              <FormLabel htmlFor="pin-post" mb="0" fontSize="sm" fontWeight="700" color={BROWN} flex={1}>
+                Pin to Top of Feed
+              </FormLabel>
+              <Switch id="pin-post" isChecked={pinPost} onChange={e=>setPinPost(e.target.checked)} colorScheme="orange" />
+            </FormControl>
+            {adminMode && (
+              <Box bg="blue.100" rounded="lg" p={2}>
+                <Text fontSize="xs" color="blue.700">This post will show with a verified badge</Text>
+              </Box>
+            )}
+          </VStack>
+        </Box>
+      )}
       <Button w="full" size="lg" bg={reach==="beyond"?GOLD:ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ opacity:0.9 }} onClick={handleShare} isLoading={posting} loadingText="Sharing…">
         {reach==="beyond" ? "✨ Share to The Great Beyond" : "Share My Spark 🔥"}
       </Button>
@@ -1299,6 +1350,9 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
   const [myReactions, setMyReactions] = useState<Record<number, Reaction[]>>({});
   const [prevOpen,    setPrevOpen]    = useState<Record<number,boolean>>({});
   const [reactPeek,   setReactPeek]   = useState<{ sparkId:number; reaction:Reaction; names:string[] }|null>(null);
+  const [displayedSparks, setDisplayedSparks] = useState<SparkPost[]>([]);
+  const [isRecycling, setIsRecycling] = useState(false);
+  const observerTarget = useRef<HTMLDivElement>(null);
 
   // Initialise from DB — support multiple reactions per post
   useEffect(() => {
@@ -1309,6 +1363,38 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
     });
     setMyReactions(initial);
   }, [sparks, user.username]);
+
+  // Initialize displayed sparks
+  useEffect(() => {
+    setDisplayedSparks(sparks);
+    setIsRecycling(false);
+  }, [sparks]);
+
+  // Infinite scroll - recycle content when reaching bottom
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting && sparks.length > 0) {
+          setIsRecycling(true);
+          setTimeout(() => {
+            setDisplayedSparks(prev => [...prev, ...sparks]);
+            setIsRecycling(false);
+          }, 500);
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current);
+    }
+
+    return () => {
+      if (observerTarget.current) {
+        observer.unobserve(observerTarget.current);
+      }
+    };
+  }, [sparks]);
 
   const handleReact = async (sparkId: number, reaction: Reaction) => {
     const current = myReactions[sparkId] ?? [];
@@ -1382,16 +1468,23 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
       )}
       <VStack spacing={5} px={4} pb={8}>
         <AnimatePresence>
-          {sparks.map(s => {
+          {displayedSparks.map((s, idx) => {
             const jt = getJourneyTotal(sparks, s.journeyId);
             const linked = s.linkedSparkId ? sparks.find(p=>p.id===s.linkedSparkId) : null;
             return (
-              <MotionBox key={s.id} initial={{ opacity:0, y:-16 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, scale:0.95 }} transition={{ duration:0.3 }} w="full" bg="white" rounded="2xl" shadow="md" overflow="hidden">
-                <Box h="4px" bg={s.reach==="beyond"?GOLD:ORANGE} />
+              <MotionBox key={`${s.id}-${idx}`} initial={{ opacity:0, y:-16 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, scale:0.95 }} transition={{ duration:0.3 }} w="full" bg="white" rounded="2xl" shadow="md" overflow="hidden">
+                <Box h="4px" bg={s.reach==="beyond"?GOLD:s.pinned?"#3B82F6":ORANGE} />
                 <Flex px={4} pt={4} pb={2} align="center" gap={3}>
                   <Box cursor="pointer" onClick={()=>setViewProfile(s.username)}><UserAvatar user={{ name:s.name, profilePicUrl:s.profilePicUrl }} size="md" /></Box>
-                  <Box flex={1} cursor="pointer" onClick={()=>setViewProfile(s.username)}><Text fontWeight="900" color={BROWN}>{s.name}</Text><Text fontSize="11px" color="gray.400">@{s.username}</Text></Box>
+                  <Box flex={1} cursor="pointer" onClick={()=>setViewProfile(s.username)}>
+                    <Flex align="center" gap={1.5}>
+                      <Text fontWeight="900" color={BROWN}>{s.name}</Text>
+                      {s.isAdminPost && <VerifiedIcon size={16} />}
+                    </Flex>
+                    <Text fontSize="11px" color="gray.400">@{s.username}</Text>
+                  </Box>
                   <HStack spacing={2} flexWrap="wrap" justify="flex-end">
+                    {s.pinned && <Badge bg="blue.100" color="blue.600" fontSize="10px" fontWeight="700" px={2} py={0.5} rounded="full">📌 Pinned</Badge>}
                     <Text fontSize="xs" fontWeight="700" color={s.sparkType==="new"?ORANGE:BROWN} bg={s.sparkType==="new"?"orange.50":"gray.100"} px={2} py={0.5} rounded="full">
                       {s.sparkType==="new"?"New Spark":"Ongoing Spark"}
                     </Text>
@@ -1442,6 +1535,17 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
             );
           })}
         </AnimatePresence>
+        {sparks.length > 0 && (
+          <>
+            <div ref={observerTarget} style={{ height: '20px', width: '100%' }} />
+            {isRecycling && (
+              <Center py={4}>
+                <Spinner color={ORANGE} size="md" />
+                <Text ml={3} fontSize="sm" color="gray.400" fontWeight="600">Loading more sparks...</Text>
+              </Center>
+            )}
+          </>
+        )}
       </VStack>
     </Box>
   );
@@ -1518,6 +1622,7 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
   const [activeChat,  setActiveChat]  = useState<string|null>(null);
   const [msgText,     setMsgText]     = useState("");
   const [sending,     setSending]     = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLInputElement>(null);
 
@@ -1613,7 +1718,7 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
     return (
       <Box display="flex" flexDirection="column" h={{ base:"calc(100vh - 120px)", lg:"calc(100vh - 40px)" }}>
         {/* Header */}
-        <Flex bg="white" px={4} py={3} align="center" gap={3} borderBottom="1px solid" borderColor="orange.100" position="sticky" top={0} zIndex={10} flexShrink={0}>
+        <Flex bg="white" px={4} py={3} align="center" gap={2} borderBottom="1px solid" borderColor="orange.100" position="sticky" top={0} zIndex={10} flexShrink={0}>
           <Button variant="ghost" size="sm" color={BROWN} px={1} fontWeight="700" _hover={{ bg:"orange.50" }} onClick={()=>setActiveChat(null)}>← Back</Button>
           <Box cursor="pointer" onClick={()=>setViewProfile(activeChat)}>
             <UserAvatar user={partner} size="sm" />
@@ -1622,8 +1727,16 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
             <Text fontWeight="900" color={BROWN} fontSize="sm" lineHeight={1.2}>{partner.name}</Text>
             <Text fontSize="10px" color="gray.400">@{activeChat}</Text>
           </Box>
-          <Button size="xs" variant="ghost" color={ORANGE} fontWeight="700" _hover={{ bg:"orange.50" }} onClick={()=>setViewProfile(activeChat)}>View Passport →</Button>
+          <Button size="xs" variant="ghost" color="red.500" fontWeight="700" _hover={{ bg:"red.50" }} onClick={()=>setShowReportModal(true)} title="Report incident">⚠️</Button>
+          <Button size="xs" variant="ghost" color={ORANGE} fontWeight="700" _hover={{ bg:"orange.50" }} onClick={()=>setViewProfile(activeChat)}>View →</Button>
         </Flex>
+        <IncidentReportModal
+          isOpen={showReportModal}
+          onClose={()=>setShowReportModal(false)}
+          reporterUsername={user.username}
+          reportedUsername={activeChat}
+          chatContext={chatMessages.slice(-5).map(m => `${m.fromUsername}: ${m.content}`).join("\n")}
+        />
 
         {/* Messages list */}
         <Box flex={1} overflowY="auto" px={4} py={4} bg={CREAM}>
@@ -1875,6 +1988,9 @@ export default function HomeClient() {
         reactedBy: r.reacted_by as Record<Reaction,string[]>,
         sparkType: r.spark_type as SparkType, journeyId: r.journey_id as string,
         linkedSparkId: (r.linked_spark_id ?? undefined) as number|undefined,
+        isAdminPost: (r.is_admin_post ?? false) as boolean,
+        pinned: (r.pinned ?? false) as boolean,
+        adminPostType: (r.admin_post_type ?? 'regular') as string,
       };
     }
     const channel = supabase
@@ -1977,15 +2093,21 @@ export default function HomeClient() {
     { id:"feed",   emoji:"🏠", label:"Spark Feed" },
     { id:"mypark", emoji:"✨", label:"My Spark"   },
     { id:"chats",  emoji:"💬", label:"Hi & Chats", badge:hiConnectCount||undefined },
+    ...(user.isAdmin ? [{ id:"admin" as View, emoji:"⚙️", label:"Admin Panel" }] : []),
   ];
 
-  const MainContent = () => (
-    <>
-      {view==="feed"   && <FeedScreen   user={user} sparks={sparks} setSparks={setSparks} onShowMySpark={()=>setView("mypark")} setViewProfile={setViewProfile} />}
-      {view==="mypark" && <MySparkScreen user={user} sparks={sparks} onPost={handlePost} />}
-      {view==="chats"  && <ChatsScreen  user={user} sparks={sparks} onOpenTokens={openTokens} onEdit={openEdit} onLogout={handleLogout} setViewProfile={setViewProfile} openedHiConnects={openedHiConnects} markHiOpened={markHiOpened} />}
-    </>
-  );
+  const MainContent = () => {
+    if (view === "admin" && user.isAdmin) {
+      return <AdminDashboard onClose={() => setView("feed")} />;
+    }
+    return (
+      <>
+        {view==="feed"   && <FeedScreen   user={user} sparks={sparks} setSparks={setSparks} onShowMySpark={()=>setView("mypark")} setViewProfile={setViewProfile} />}
+        {view==="mypark" && <MySparkScreen user={user} sparks={sparks} onPost={handlePost} />}
+        {view==="chats"  && <ChatsScreen  user={user} sparks={sparks} onOpenTokens={openTokens} onEdit={openEdit} onLogout={handleLogout} setViewProfile={setViewProfile} openedHiConnects={openedHiConnects} markHiOpened={markHiOpened} />}
+      </>
+    );
+  };
 
   return (
     <ChakraProvider theme={theme}>

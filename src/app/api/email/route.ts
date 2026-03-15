@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 type EmailEvent =
   | "welcome"
@@ -208,6 +208,13 @@ function templates(payload: EmailPayload): { subject: string; html: string } {
 export async function POST(request: Request) {
   try {
     const payload: EmailPayload = await request.json();
+
+    // If no resend client, return success without sending (graceful degradation)
+    if (!resend) {
+      console.log("Email would be sent:", payload.event, "to", payload.to);
+      return NextResponse.json({ id: "no-resend-configured", success: true });
+    }
+
     const { subject, html } = templates(payload);
 
     const { data, error } = await resend.emails.send({
