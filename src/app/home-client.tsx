@@ -24,21 +24,45 @@
     linked_spark_id bigint,
     reactions jsonb default '{"Encourage":0,"Say Hi":0,"Applaud":0,"Keep Going":0}'::jsonb,
     reacted_by jsonb default '{"Encourage":[],"Say Hi":[],"Applaud":[],"Keep Going":[]}'::jsonb,
+    target_country text default '', target_state text default '',
+    broadcast_freq_type text default '',
+    broadcast_freq_value integer default 0,
+    broadcast_max_per_day integer default 0,
+    broadcast_expires_at timestamptz,
     created_at timestamptz default now()
+  );
+  -- If table already exists, add missing broadcast columns:
+  alter table sparks add column if not exists target_country text default '';
+  alter table sparks add column if not exists target_state text default '';
+  alter table sparks add column if not exists broadcast_freq_type text default '';
+  alter table sparks add column if not exists broadcast_freq_value integer default 0;
+  alter table sparks add column if not exists broadcast_max_per_day integer default 0;
+  alter table sparks add column if not exists broadcast_expires_at timestamptz;
+
+  create table if not exists messages (
+    id bigserial primary key,
+    from_username text not null,
+    to_username   text not null,
+    content       text not null,
+    read          boolean default false,
+    created_at    timestamptz default now()
   );
 
   alter table profiles disable row level security;
-  alter table sparks disable row level security;
+  alter table sparks   disable row level security;
+  alter table messages disable row level security;
 
   insert into storage.buckets (id, name, public)
     values ('spark-media', 'spark-media', true) on conflict do nothing;
 
-  create policy if not exists "Public read" on storage.objects
-    for select using (bucket_id = 'spark-media');
-  create policy if not exists "Anon upload" on storage.objects
-    for insert with check (bucket_id = 'spark-media');
-  create policy if not exists "Anon update" on storage.objects
-    for update using (bucket_id = 'spark-media');
+  drop policy if exists "Public read" on storage.objects;
+  create policy "Public read" on storage.objects for select using (bucket_id = 'spark-media');
+  drop policy if exists "Anon upload" on storage.objects;
+  create policy "Anon upload" on storage.objects for insert with check (bucket_id = 'spark-media');
+  drop policy if exists "Anon update" on storage.objects;
+  create policy "Anon update" on storage.objects for update using (bucket_id = 'spark-media');
+  drop policy if exists "Anon delete" on storage.objects;
+  create policy "Anon delete" on storage.objects for delete using (bucket_id = 'spark-media');
   ─────────────────────────────────────────────────────────────────────────── */
 
 import {
@@ -87,10 +111,22 @@ const REACTIONS: { label: Reaction; emoji: string }[] = [
 ];
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
-interface Tasks { daily_claimed: string; }
-const DEFAULT_TASKS: Tasks = { daily_claimed: "" };
+interface Tasks {
+  daily_claimed: string;
+  first_spark_claimed: boolean;
+  reactions_5_claimed: boolean;
+  reactions_10_claimed: boolean;
+  total_reactions_given: number;
+}
+const DEFAULT_TASKS: Tasks = {
+  daily_claimed: "",
+  first_spark_claimed: false,
+  reactions_5_claimed: false,
+  reactions_10_claimed: false,
+  total_reactions_given: 0,
+};
 function today() { return new Date().toISOString().split("T")[0]; }
-function loadTasks(): Tasks { try { const r = localStorage.getItem("ca_tasks"); return r ? JSON.parse(r) : { ...DEFAULT_TASKS }; } catch { return { ...DEFAULT_TASKS }; } }
+function loadTasks(): Tasks { try { const r = localStorage.getItem("ca_tasks"); return r ? { ...DEFAULT_TASKS, ...JSON.parse(r) } : { ...DEFAULT_TASKS }; } catch { return { ...DEFAULT_TASKS }; } }
 function saveTasks(t: Tasks) { localStorage.setItem("ca_tasks", JSON.stringify(t)); }
 
 // ─── Location data ────────────────────────────────────────────────────────────
@@ -146,10 +182,20 @@ const GREETINGS = [
   { text: "Ẹ káàbọ̀!", meaning: "Welcome", language: "Yoruba", place: "South-West Nigeria" },
   { text: "Sannu da zuwa!", meaning: "Welcome", language: "Hausa", place: "Northern Nigeria" },
   { text: "Akwaaba!", meaning: "Welcome", language: "Twi", place: "Ghana" },
+  { text: "Woézọ!", meaning: "Welcome", language: "Ewe", place: "Ghana & Togo" },
   { text: "Karibu!", meaning: "Welcome", language: "Swahili", place: "East Africa" },
+  { text: "Selam!", meaning: "Welcome", language: "Amharic", place: "Ethiopia" },
+  { text: "Murakaza neza!", meaning: "Welcome", language: "Kinyarwanda", place: "Rwanda" },
+  { text: "Boyei malamu!", meaning: "Welcome well", language: "Lingala", place: "DR Congo" },
   { text: "Dumela!", meaning: "Welcome", language: "Setswana", place: "Botswana / South Africa" },
   { text: "Sawubona!", meaning: "I see you — Welcome", language: "Zulu", place: "South Africa" },
+  { text: "Dalal ak jamm!", meaning: "Welcome in peace", language: "Wolof", place: "Senegal & Gambia" },
+  { text: "Mauya!", meaning: "Welcome", language: "Shona", place: "Zimbabwe" },
   { text: "Marhaba!", meaning: "Welcome", language: "Arabic", place: "North Africa" },
+  { text: "Bienvenue!", meaning: "Welcome", language: "French", place: "West & Central Africa" },
+  { text: "Bem-vindo!", meaning: "Welcome", language: "Portuguese", place: "Angola & Mozambique" },
+  { text: "Ahlan!", meaning: "Welcome", language: "Darija", place: "Morocco & Algeria" },
+  { text: "Mwaiseni!", meaning: "Welcome", language: "Nyanja", place: "Zambia & Malawi" },
   { text: "Ayikoo!", meaning: "Welcome, well done", language: "Luganda", place: "Uganda" },
   { text: "Nnọọ!", meaning: "You are welcome", language: "Igbo", place: "Enugu, Nigeria" },
   { text: "E wo!", meaning: "Welcome", language: "Ijaw", place: "Niger Delta, Nigeria" },
@@ -172,6 +218,11 @@ interface SparkPost {
   reactedBy: Record<Reaction, string[]>;
   sparkType: SparkType; journeyId: string; linkedSparkId?: number;
   isAdminPost?: boolean; pinned?: boolean; adminPostType?: string;
+  targetCountry?: string; targetState?: string;
+  broadcastFreqType?: string;
+  broadcastFreqValue?: number;
+  broadcastMaxPerDay?: number;
+  broadcastExpiresAt?: string;
 }
 interface Message {
   id: number; fromUsername: string; toUsername: string;
@@ -188,7 +239,7 @@ function calcAge(y: number, m = 0, d = 1) {
 }
 function getJourneyTotal(sparks: SparkPost[], journeyId: string) {
   return sparks.filter(s => s.journeyId === journeyId)
-    .reduce((sum, s) => sum + Object.values(s.reactions).reduce((a, b) => a + b, 0), 0);
+    .reduce((sum, s) => sum + Object.values(s.reactions ?? {}).reduce((a, b) => a + b, 0), 0);
 }
 function buildBio(u: Pick<User,"name"|"occupation"|"city"|"state"|"country"|"birthYear"|"showAge">) {
   const age = u.showAge && u.birthYear ? `, ${calcAge(u.birthYear)}` : "";
@@ -196,11 +247,62 @@ function buildBio(u: Pick<User,"name"|"occupation"|"city"|"state"|"country"|"bir
   return `Hi! I am ${u.name}${age} — a ${u.occupation} from ${loc}. 🌍 Ready to show you my spark! ✨`;
 }
 
-async function uploadMedia(file: File, folder: string): Promise<string> {
-  const ext  = file.name.split(".").pop() ?? "bin";
+/** Compress an image file via canvas to max 1200px wide, quality 0.82 JPEG */
+async function compressImage(file: File): Promise<File> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX = 1200;
+      let { width, height } = img;
+      if (width > MAX) { height = Math.round(height * MAX / width); width = MAX; }
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => resolve(blob ? new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), { type:"image/jpeg" }) : file),
+        "image/jpeg", 0.82
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+/** Upload via Supabase SDK (reliable) with simulated progress ticker. */
+async function uploadMedia(
+  file: File,
+  folder: string,
+  onProgress?: (pct: number) => void
+): Promise<string> {
+  // Compress images before upload
+  const toUpload = file.type.startsWith("image/") ? await compressImage(file) : file;
+  const ext  = (toUpload.name.split(".").pop() ?? "bin").toLowerCase();
   const path = `${folder}/${uid()}.${ext}`;
-  const { error } = await supabase.storage.from("spark-media").upload(path, file, { upsert: true });
-  if (error) throw error;
+
+  // Simulate progress: ramp to 90% over estimated time, then jump to 100% on finish
+  let simPct = 0;
+  const isVideo = toUpload.type.startsWith("video/");
+  const estMs = isVideo ? Math.max(3000, toUpload.size / 50000) : 1500; // ~50KB/s estimate
+  const interval = setInterval(() => {
+    simPct = Math.min(simPct + (90 / (estMs / 200)), 90);
+    onProgress?.(Math.round(simPct));
+  }, 200);
+
+  try {
+    const { error } = await supabase.storage
+      .from("spark-media")
+      .upload(path, toUpload, {
+        upsert: true,
+        contentType: toUpload.type || "application/octet-stream",
+      });
+    if (error) throw new Error(error.message);
+  } finally {
+    clearInterval(interval);
+  }
+
+  onProgress?.(100);
   const { data } = supabase.storage.from("spark-media").getPublicUrl(path);
   return data.publicUrl;
 }
@@ -254,12 +356,19 @@ async function fetchSparks(): Promise<SparkPost[]> {
     id: r.id, userId: r.user_id, name: r.name, username: r.username,
     profilePicUrl: r.profile_pic_url ?? "", caption: r.caption,
     mediaUrl: r.media_url, mediaType: r.media_type as MediaType,
-    reach: r.reach as Reach, reactions: r.reactions,
-    reactedBy: r.reacted_by, sparkType: r.spark_type as SparkType,
+    reach: r.reach as Reach,
+    reactions: (r.reactions as Record<Reaction,number>) ?? { Encourage:0, "Say Hi":0, Applaud:0, "Keep Going":0 },
+    reactedBy: (r.reacted_by as Record<Reaction,string[]>) ?? { Encourage:[], "Say Hi":[], Applaud:[], "Keep Going":[] },
+    sparkType: r.spark_type as SparkType,
     journeyId: r.journey_id, linkedSparkId: r.linked_spark_id ?? undefined,
     isAdminPost: r.is_admin_post ?? false,
     pinned: r.pinned ?? false,
     adminPostType: r.admin_post_type ?? 'regular',
+    targetCountry: r.target_country ?? "", targetState: r.target_state ?? "",
+    broadcastFreqType: r.broadcast_freq_type ?? "",
+    broadcastFreqValue: r.broadcast_freq_value ?? 0,
+    broadcastMaxPerDay: r.broadcast_max_per_day ?? 0,
+    broadcastExpiresAt: r.broadcast_expires_at ?? "",
   }));
 }
 
@@ -269,6 +378,49 @@ async function updateReactions(sparkId: number, reactions: Record<Reaction,numbe
 
 async function updateCoins(userId: string, coins: number) {
   await supabase.from("profiles").update({ coins }).eq("id", userId);
+}
+
+function trackEvent(eventType: string, user: User, metadata: Record<string, unknown> = {}) {
+  supabase.from("analytics_events").insert({
+    event_type: eventType, user_id: user.id, username: user.username,
+    country: user.country, state: user.state, city: user.city, metadata,
+  }).then(({ error }) => { if (error) console.warn("trackEvent failed:", error.message); });
+}
+
+/** Track every page visit — works even for logged-out / anonymous visitors */
+async function trackVisit(user: User | null) {
+  try {
+    // Deduplicate: only track once per session
+    const sessionKey = "ca_visit_tracked";
+    if (sessionStorage.getItem(sessionKey)) return;
+    sessionStorage.setItem(sessionKey, "1");
+
+    // Use profile location if available, otherwise geo-lookup via ipapi.co
+    let country = user?.country ?? "";
+    let state   = user?.state   ?? "";
+    let city    = user?.city    ?? "";
+
+    if (!country) {
+      try {
+        const geo = await fetch("https://ipapi.co/json/", { signal: AbortSignal.timeout(4000) });
+        if (geo.ok) {
+          const d = await geo.json();
+          country = d.country_name ?? "";
+          state   = d.region       ?? "";
+          city    = d.city         ?? "";
+        }
+      } catch { /* geo lookup failed — proceed without location */ }
+    }
+
+    const { error } = await supabase.from("analytics_events").insert({
+      event_type: "visit",
+      user_id:   user?.id       ?? "anonymous",
+      username:  user?.username ?? "anonymous",
+      country, state, city,
+      metadata: { logged_in: !!user },
+    });
+    if (error) console.warn("trackVisit failed:", error.message);
+  } catch (e) { console.warn("trackVisit error:", e); }
 }
 
 async function fetchMessages(username: string): Promise<Message[]> {
@@ -282,8 +434,9 @@ async function fetchMessages(username: string): Promise<Message[]> {
   }));
 }
 
-async function sendMessage(from: string, to: string, content: string): Promise<void> {
-  await supabase.from("messages").insert({ from_username: from, to_username: to, content });
+async function sendMessage(from: string, to: string, content: string): Promise<string | null> {
+  const { error } = await supabase.from("messages").insert({ from_username: from, to_username: to, content, read: false });
+  return error ? error.message : null;
 }
 
 async function markRead(from: string, to: string): Promise<void> {
@@ -307,6 +460,273 @@ async function sendEmail(
       body: JSON.stringify({ event, to, name, username, extra }),
     });
   } catch { /* fire-and-forget — never block the UI */ }
+}
+
+// ─── Welcome Splash ───────────────────────────────────────────────────────────
+function WelcomeSplash({ user, onComplete }: { user: User; onComplete: () => void }) {
+  // phase 0 = dark + bg patterns
+  // phase 1 = portrait fades in
+  // phase 2 = spark begins orbiting, SVG paths draw themselves
+  // phase 3 = warm colour filter shifts onto portrait
+  // phase 4 = "Welcome back, [name]." slides up
+  // phase 5 = "Your spark is ready." slides up
+  // phase 6 = spark expands outward → logo text appears
+  // phase 7 = fade out everything
+  const [phase, setPhase] = useState(0);
+  useEffect(() => {
+    const ts = [
+      setTimeout(() => setPhase(1), 160),
+      setTimeout(() => setPhase(2), 460),
+      setTimeout(() => setPhase(3), 1000),
+      setTimeout(() => setPhase(4), 1300),
+      setTimeout(() => setPhase(5), 1620),
+      setTimeout(() => setPhase(6), 2050),
+      setTimeout(() => setPhase(7), 2380),
+    ];
+    const done = setTimeout(onComplete, 3100);
+    return () => { ts.forEach(clearTimeout); clearTimeout(done); };
+  }, [onComplete]);
+
+  // SVG frame: 260×260, center (130,130). Portrait 104px, centered → SVG offset top/left = -(130-52) = -78px
+  // Orbit radius 72px. Circle path starts at top: M130,58
+  // Circumference ≈ 453px
+  const CLAY = "#C13A1C";
+
+  // Corner bracket paths (L-shapes, each arm 20px = total 40px = stroke-dasharray)
+  const brackets = [
+    "M 68,90 L 68,66 L 90,66",     // top-left
+    "M 170,66 L 192,66 L 192,90",  // top-right
+    "M 68,170 L 68,194 L 90,194",  // bottom-left
+    "M 170,194 L 192,194 L 192,170", // bottom-right
+  ];
+  // Mid-side chevron ticks (V-shape, arm ~10px each = 20px total)
+  const chevrons = [
+    "M 121,57 L 130,49 L 139,57",   // top
+    "M 121,203 L 130,211 L 139,203", // bottom
+    "M 57,121 L 49,130 L 57,139",   // left
+    "M 203,121 L 211,130 L 203,139", // right
+  ];
+  const bracketDelays  = ["0.05s","0.1s","0.08s","0.12s"];
+  const chevronDelays  = ["0.18s","0.22s","0.2s","0.25s"];
+
+  return (
+    <>
+      <style>{`
+        @keyframes sa-ring-cw    { to { transform: rotate(360deg);  } }
+        @keyframes sa-ring-ccw   { to { transform: rotate(-360deg); } }
+        @keyframes sa-pat        { from{opacity:0}   to{opacity:1} }
+        @keyframes sa-photo-in   { from{opacity:0;transform:scale(.84) translateY(6px)} to{opacity:1;transform:scale(1) translateY(0)} }
+        @keyframes sa-warm       { from{filter:sepia(0%) saturate(1) contrast(1) brightness(1)} to{filter:sepia(26%) saturate(1.75) contrast(1.14) brightness(1.06)} }
+        @keyframes sa-text-up    { from{opacity:0;transform:translateY(11px)} to{opacity:1;transform:translateY(0)} }
+        /* Spark orbits clockwise from top. rotate(-90→270deg) translateX(72px). */
+        @keyframes sa-orbit      { from{transform:rotate(-90deg) translateX(72px)} to{transform:rotate(270deg) translateX(72px)} }
+        /* Path draws itself in sync with spark orbit */
+        @keyframes sa-draw-orbit { from{stroke-dashoffset:453} to{stroke-dashoffset:0} }
+        /* Corner brackets draw in */
+        @keyframes sa-draw-brk   { from{stroke-dashoffset:44} to{stroke-dashoffset:0} }
+        /* Chevron ticks draw in */
+        @keyframes sa-draw-chv   { from{stroke-dashoffset:22} to{stroke-dashoffset:0} }
+        /* Ember glow pulse */
+        @keyframes sa-glow       { 0%,100%{filter:drop-shadow(0 0 5px #F5A623);opacity:.65} 50%{filter:drop-shadow(0 0 18px #F5A623) drop-shadow(0 0 32px #E05A1C);opacity:1} }
+        /* Ember box-shadow pulse (for the orbiting dot) */
+        @keyframes sa-emb        { 0%,100%{box-shadow:0 0 6px 2px #E05A1C,0 0 14px 4px #F5A623aa} 50%{box-shadow:0 0 14px 5px #F5A623,0 0 26px 8px #E05A1Caa} }
+        /* Spark explodes outward at phase 6 */
+        @keyframes sa-expand     { 0%{transform:scale(1);opacity:1} 100%{transform:scale(22);opacity:0} }
+        /* Logo text contracts in from wide spacing */
+        @keyframes sa-logo-in    { from{opacity:0;letter-spacing:.55em} to{opacity:1;letter-spacing:.22em} }
+        @keyframes sa-out        { from{opacity:1} to{opacity:0} }
+
+        .sa-ring1 { animation: sa-ring-cw  11s linear infinite; transform-origin:50% 50%; }
+        .sa-ring2 { animation: sa-ring-ccw  8s linear infinite; transform-origin:50% 50%; }
+        .sa-ring3 { animation: sa-ring-cw  17s linear infinite; transform-origin:50% 50%; }
+        .sa-ticks { animation: sa-glow 2.4s ease-in-out infinite; }
+      `}</style>
+
+      <Box
+        position="fixed" inset={0} zIndex={2000}
+        display="flex" alignItems="center" justifyContent="center" flexDirection="column"
+        overflow="hidden"
+        style={{
+          background: "radial-gradient(ellipse at 50% 42%, #1E0700 0%, #0A0100 65%, #030000 100%)",
+          animation: phase >= 7 ? "sa-out .72s ease forwards" : undefined,
+        }}
+      >
+        {/* ── kente + mud-cloth background ── */}
+        <Box position="absolute" inset={0} pointerEvents="none"
+          style={{ animation:"sa-pat .8s ease .04s forwards", opacity:0 }}>
+          <svg width="100%" height="100%">
+            <defs>
+              <pattern id="sp-k" x="0" y="0" width="48" height="48" patternUnits="userSpaceOnUse">
+                <polygon points="24,2 46,24 24,46 2,24"   fill="none" stroke="#F5A623" strokeWidth=".7"  opacity=".45"/>
+                <polygon points="24,10 38,24 24,38 10,24" fill="none" stroke="#E05A1C" strokeWidth=".45" opacity=".28"/>
+                <rect x="21" y="21" width="6" height="6" fill="#C8891A" opacity=".3" transform="rotate(45 24 24)"/>
+              </pattern>
+              <pattern id="sp-m" x="0" y="0" width="64" height="32" patternUnits="userSpaceOnUse">
+                <polyline points="0,16 10,6 20,16 30,6 40,16 50,6 60,16 64,12" fill="none" stroke="#F5A623" strokeWidth="1"  opacity=".16"/>
+                <polyline points="0,26 10,16 20,26 30,16 40,26 50,16 60,26 64,22" fill="none" stroke="#C13A1C" strokeWidth=".7" opacity=".13"/>
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#sp-k)"/>
+            <rect width="100%" height="100%" fill="url(#sp-m)"/>
+          </svg>
+        </Box>
+
+        {/* ── three rotating outer rings ── */}
+        <Box position="absolute" inset={0} display="flex" alignItems="center" justifyContent="center" pointerEvents="none">
+          <svg width="390" height="390" viewBox="0 0 390 390" style={{ position:"absolute" }}>
+            <g className="sa-ring1">
+              <circle cx="195" cy="195" r="182" fill="none" stroke="#F5A623" strokeWidth="1"   strokeDasharray="10 7"   opacity=".2"/>
+              <circle cx="195" cy="195" r="180" fill="none" stroke="#C13A1C" strokeWidth=".5"  strokeDasharray="4 14"   opacity=".14"/>
+            </g>
+            <g className="sa-ring2">
+              <circle cx="195" cy="195" r="160" fill="none" stroke="#C8891A" strokeWidth="1.5" strokeDasharray="18 8 4 8" opacity=".26"/>
+            </g>
+            <g className="sa-ring3">
+              <circle cx="195" cy="195" r="138" fill="none" stroke="#1A1464" strokeWidth=".8"  strokeDasharray="6 10"   opacity=".32"/>
+              <circle cx="195" cy="195" r="136" fill="none" stroke="#F5A623" strokeWidth=".4"  strokeDasharray="2 18"   opacity=".18"/>
+            </g>
+          </svg>
+          {/* 8 directional tick marks */}
+          <svg width="290" height="290" viewBox="0 0 290 290" style={{ position:"absolute" }} className="sa-ticks">
+            {[0,45,90,135,180,225,270,315].map(deg => {
+              const rad = deg * Math.PI / 180;
+              const x1 = 145 + 122*Math.sin(rad), y1 = 145 - 122*Math.cos(rad);
+              const x2 = 145 + 133*Math.sin(rad), y2 = 145 - 133*Math.cos(rad);
+              const xd = 145 + 137*Math.sin(rad), yd = 145 - 137*Math.cos(rad);
+              return (
+                <g key={deg}>
+                  <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#F5A623" strokeWidth={deg%90===0?2.5:1.2} strokeLinecap="round"/>
+                  <circle cx={xd} cy={yd} r={deg%90===0?3:1.5} fill="#F5A623"/>
+                </g>
+              );
+            })}
+          </svg>
+        </Box>
+
+        {/* ── portrait ── */}
+        {phase >= 1 && (
+          <Box
+            position="relative" mb={5}
+            style={{ animation:"sa-photo-in .5s cubic-bezier(.22,1,.36,1) forwards", opacity:0 }}
+          >
+            {/* SVG frame overlay centered on 104px portrait */}
+            <Box position="absolute" style={{ top:"-78px", left:"-78px", width:"260px", height:"260px", pointerEvents:"none", zIndex:2 }}>
+              <svg width="260" height="260" viewBox="0 0 260 260" overflow="visible">
+                {/* Orbit circle — draws itself as the spark travels (clockwise from top) */}
+                {phase >= 2 && (
+                  <path d="M 130,58 A 72,72 0 1,1 130.001,58"
+                    fill="none" stroke="#F5A623" strokeWidth="1.2" opacity=".45"
+                    strokeDasharray="453" strokeLinecap="round"
+                    style={{ animation:"sa-draw-orbit 1.3s ease-out forwards", strokeDashoffset:453 }}/>
+                )}
+                {/* Corner brackets */}
+                {phase >= 2 && brackets.map((d, i) => (
+                  <path key={i} d={d} fill="none"
+                    stroke={i%2===0?"#F5A623":CLAY} strokeWidth="2.2" strokeLinecap="round"
+                    strokeDasharray="44"
+                    style={{ animation:`sa-draw-brk .55s ease-out ${bracketDelays[i]} forwards`, strokeDashoffset:44 }}/>
+                ))}
+                {/* Mid-side chevrons */}
+                {phase >= 2 && chevrons.map((d, i) => (
+                  <path key={i} d={d} fill="none"
+                    stroke="#C8891A" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"
+                    strokeDasharray="22"
+                    style={{ animation:`sa-draw-chv .45s ease-out ${chevronDelays[i]} forwards`, strokeDashoffset:22 }}/>
+                ))}
+              </svg>
+            </Box>
+
+            {/* the portrait itself */}
+            <Box
+              w="104px" h="104px" rounded="full" overflow="hidden"
+              border="2.5px solid" borderColor="#F5A623" position="relative" zIndex={1}
+              style={{ animation: phase >= 3 ? "sa-warm .85s ease forwards" : undefined }}
+            >
+              {user.profilePicUrl
+                ? <img src={user.profilePicUrl} alt={user.name} style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+                : <Box w="full" h="full" display="flex" alignItems="center" justifyContent="center"
+                    style={{ background:`linear-gradient(145deg,${BROWN},#8B3A0F)` }}
+                    fontSize="36px" fontWeight="900" color={GOLD}>
+                    {user.name?.[0]?.toUpperCase()}
+                  </Box>
+              }
+            </Box>
+
+            {/* warm colour overlay — fades in at phase 3 */}
+            {phase >= 3 && (
+              <Box position="absolute" inset={0} rounded="full" zIndex={3} pointerEvents="none"
+                style={{
+                  background:"radial-gradient(circle at 62% 32%, rgba(245,166,35,.28), rgba(225,90,28,.18), transparent 62%)",
+                  mixBlendMode:"overlay",
+                  animation:"sa-pat .7s ease forwards", opacity:0,
+                }}/>
+            )}
+
+            {/* ── orbiting spark (phase 2–5) ── */}
+            {phase >= 2 && phase < 6 && (
+              <Box
+                position="absolute" zIndex={4}
+                style={{
+                  top:"46px", left:"46px",          // element center = portrait center (52,52) - half(6)
+                  width:"12px", height:"12px",
+                  borderRadius:"50%",
+                  background:"radial-gradient(circle at 38% 32%, #FFE08A, #E05A1C)",
+                  animation:"sa-orbit 1.3s ease-in-out forwards, sa-emb 1s ease-in-out infinite",
+                  transformOrigin:"6px 6px",         // orbit pivot = element center = portrait center
+                }}/>
+            )}
+
+            {/* ── spark explosion at phase 6 ── */}
+            {phase === 6 && (
+              <Box
+                position="absolute" zIndex={4}
+                style={{
+                  top:"46px", left:"46px",
+                  width:"12px", height:"12px",
+                  borderRadius:"50%",
+                  background:"radial-gradient(circle at 38% 32%, #FFE08A, #E05A1C)",
+                  boxShadow:"0 0 10px 3px #F5A623",
+                  animation:"sa-expand .55s ease-out forwards",
+                  transformOrigin:"6px 6px",
+                }}/>
+            )}
+          </Box>
+        )}
+
+        {/* ── ritual text ── */}
+        <Box textAlign="center" minH="72px">
+          {phase >= 4 && (
+            <Text
+              fontSize="sm" fontWeight="600" color="rgba(255,255,255,.72)"
+              letterSpacing=".06em" mb={1}
+              style={{ animation:"sa-text-up .44s ease forwards", opacity:0 }}
+            >
+              Welcome back, {user.name.split(" ")[0]}.
+            </Text>
+          )}
+          {phase >= 5 && (
+            <Text
+              fontSize="9px" fontWeight="900" color="#F5A623"
+              letterSpacing=".32em" textTransform="uppercase"
+              style={{ animation:"sa-text-up .44s ease forwards", opacity:0, textShadow:"0 0 12px #F5A623bb" }}
+            >
+              Your spark is ready.
+            </Text>
+          )}
+          {phase >= 6 && (
+            <Text
+              mt={3} fontSize="11px" fontWeight="900" color="white"
+              textTransform="uppercase"
+              style={{ animation:"sa-logo-in .45s ease forwards", opacity:0,
+                textShadow:`0 0 20px ${ORANGE}88, 0 0 40px ${ORANGE}44` }}
+            >
+              icreate.africa
+            </Text>
+          )}
+        </Box>
+      </Box>
+    </>
+  );
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -344,7 +764,11 @@ function VerifiedIcon({ size = 16 }: { size?: number }) {
 
 // ─── Logo ──────────────────────────────────────────────────────────────────────
 function CreateAfricaLogo({ size = 48 }: { size?: number }) {
-  return <img src="/logotransparent.png" alt="create.africa" style={{ width: size, height: "auto", display: "inline-block" }} />;
+  return (
+    <Box w={`${size}px`} h={`${size}px`} rounded="full" overflow="hidden" bg="white" border="2px solid" borderColor="orange.100" flexShrink={0} display="inline-block">
+      <img src="/images/logo.jpg" alt="icreate.africa" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+    </Box>
+  );
 }
 
 // ─── UserAvatar ───────────────────────────────────────────────────────────────
@@ -361,6 +785,62 @@ function UserAvatar({ user, size = "md" }: { user: Pick<User,"name"|"profilePicU
   return <Avatar name={user.name} size={size as never} bg={ORANGE} color="white" fontWeight="800" />;
 }
 
+// ─── AutoPlayVideo — plays when scrolled into view, pauses when out ────────────
+function AutoPlayVideo({ src, maxH }: { src: string; maxH: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [muted, setMuted] = useState(true);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = true; // must set directly — React muted prop unreliable
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
+      },
+      { threshold: 0.4 }
+    );
+    observer.observe(video);
+    return () => observer.disconnect();
+  }, [src]);
+
+  const toggleMute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = !v.muted;
+    setMuted(v.muted);
+  };
+
+  return (
+    <AspectRatio ratio={9/16} maxH={maxH}>
+      <Box position="relative" bg="#111">
+        <video
+          ref={videoRef}
+          src={src}
+          playsInline
+          loop
+          preload="metadata"
+          style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}
+        />
+        <Box
+          position="absolute" bottom={2} right={2}
+          bg="blackAlpha.700" rounded="full" w="34px" h="34px"
+          display="flex" alignItems="center" justifyContent="center"
+          cursor="pointer" zIndex={2}
+          onClick={toggleMute}
+        >
+          <Text fontSize="15px" lineHeight={1}>{muted ? "🔇" : "🔊"}</Text>
+        </Box>
+      </Box>
+    </AspectRatio>
+  );
+}
+
 // ─── SparkMedia ───────────────────────────────────────────────────────────────
 function SparkMedia({ mediaUrl, mediaType, maxH = "500px" }: { mediaUrl: string; mediaType: MediaType; maxH?: string }) {
   if (mediaType === "image") {
@@ -370,11 +850,7 @@ function SparkMedia({ mediaUrl, mediaType, maxH = "500px" }: { mediaUrl: string;
       </Box>
     );
   }
-  return (
-    <AspectRatio ratio={9/16} maxH={maxH}>
-      <video src={mediaUrl} controls playsInline preload="none" style={{ background:"#111", width:"100%", height:"100%", objectFit:"cover" }} />
-    </AspectRatio>
-  );
+  return <AutoPlayVideo src={mediaUrl} maxH={maxH} />;
 }
 
 // ─── FieldLabel ───────────────────────────────────────────────────────────────
@@ -383,7 +859,15 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 }
 
 // ─── Great Spark Beyond Modal ─────────────────────────────────────────────────
-function GreatBeyondModal({ isOpen, onClose, coins }: { isOpen: boolean; onClose: () => void; coins: number }) {
+function GreatBeyondModal({ isOpen, onClose, coins, tasks }: { isOpen: boolean; onClose: () => void; coins: number; tasks?: Tasks }) {
+  const t = tasks ?? DEFAULT_TASKS;
+  const taskList = [
+    { e:"👋", l:"Invite a friend",        r:"+50 tokens", done: false },
+    { e:"🎬", l:"Share your first spark",  r:"+20 tokens", done: t.first_spark_claimed },
+    { e:"💪", l:"Encourage 5 sparks",      r:"+10 tokens", done: t.reactions_5_claimed },
+    { e:"🔥", l:"Keep 10 sparks going",    r:"+10 tokens", done: t.reactions_10_claimed },
+    { e:"📅", l:"Come back every day",     r:"+1 token",   done: t.daily_claimed === today() },
+  ];
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered size="md">
       <ModalOverlay bg="blackAlpha.800" backdropFilter="blur(6px)" />
@@ -405,13 +889,42 @@ function GreatBeyondModal({ isOpen, onClose, coins }: { isOpen: boolean; onClose
             </Box>
             <Divider borderColor="rgba(255,255,255,0.15)" />
             <VStack spacing={2} w="full" textAlign="left">
-              {[["👋","Invite a friend","+50 tokens"],["🎬","Share your first spark","+20 tokens"],["💪","Encourage 5 sparks","+10 tokens"],["📅","Come back every day","+1 token"]].map(([e,l,r]) => (
-                <Flex key={l} w="full" align="center" justify="space-between" px={3} py={2} bg="rgba(255,255,255,0.05)" rounded="xl">
-                  <HStack spacing={2}><Text fontSize="sm">{e}</Text><Text fontSize="xs" color="rgba(255,255,255,0.8)" fontWeight="600">{l}</Text></HStack>
-                  <Text fontSize="xs" fontWeight="800" color={GOLD}>{r}</Text>
+              {taskList.map(({ e, l, r, done }) => (
+                <Flex key={l} w="full" align="center" justify="space-between" px={3} py={2} bg={done ? "rgba(245,166,35,0.18)" : "rgba(255,255,255,0.05)"} rounded="xl" border="1px solid" borderColor={done ? "rgba(245,166,35,0.4)" : "transparent"}>
+                  <HStack spacing={2}>
+                    <Text fontSize="sm">{e}</Text>
+                    <Text fontSize="xs" color={done ? GOLD : "rgba(255,255,255,0.8)"} fontWeight="600" textDecoration={done ? "line-through" : "none"}>{l}</Text>
+                  </HStack>
+                  <HStack spacing={1}>
+                    {done && <Text fontSize="xs" color={GOLD} fontWeight="900">✓</Text>}
+                    <Text fontSize="xs" fontWeight="800" color={GOLD}>{r}</Text>
+                  </HStack>
                 </Flex>
               ))}
             </VStack>
+            {/* Challenge — Coming Soon hero */}
+            <Box w="full" rounded="2xl" overflow="hidden" border="2px solid" borderColor={GOLD} style={{ background:"linear-gradient(135deg,#2D0A00 0%,#5C1F00 100%)" }}>
+              <Box px={4} py={4}>
+                <Flex align="center" gap={2} mb={3}>
+                  <Text fontSize="22px" style={{ filter:"drop-shadow(0 0 8px gold)" }}>🎁</Text>
+                  <Box>
+                    <Text fontSize="10px" fontWeight="900" color={GOLD} textTransform="uppercase" letterSpacing="widest">Coming April 1st</Text>
+                    <Text fontSize="sm" fontWeight="900" color="white">The Language Challenge</Text>
+                  </Box>
+                  <Box ml="auto" bg={GOLD} rounded="full" px={2} py={0.5}>
+                    <Text fontSize="9px" fontWeight="900" color="#2D0A00">SOON</Text>
+                  </Box>
+                </Flex>
+                <Text fontSize="xs" fontWeight="900" color={GOLD} mb={2}>#WhatIsWelcomeInYourLanguage</Text>
+                <Text fontSize="xs" color="rgba(255,255,255,0.75)" lineHeight="tall" mb={3}>
+                  Say &ldquo;Welcome&rdquo; in any language — your spark, your voice, your Africa. Post it now and pile up tokens. The more tokens you hold when April 1st arrives, the stronger your standing in the competition. 🌍
+                </Text>
+                <Flex align="center" gap={2} bg="rgba(245,166,35,0.15)" rounded="xl" px={3} py={2} border="1px solid" borderColor="rgba(245,166,35,0.3)">
+                  <Text fontSize="14px">💰</Text>
+                  <Text fontSize="xs" color={GOLD} fontWeight="800">Start earning tokens now — every action counts towards April 1st</Text>
+                </Flex>
+              </Box>
+            </Box>
             <Text fontSize="11px" color="rgba(255,255,255,0.3)">Your tokens never expire · we appreciate you 🤍</Text>
           </VStack>
         </ModalBody>
@@ -648,7 +1161,7 @@ function ProfilePassportModal({ username, sparks, setSparks, currentUser, onClos
       const reactedBy = { ...s.reactedBy };
       if (alreadyReacted) {
         reactions[reaction] = Math.max(0, reactions[reaction] - 1);
-        reactedBy[reaction] = reactedBy[reaction].filter(u => u !== currentUser.username);
+        reactedBy[reaction] = (reactedBy[reaction] || []).filter(u => u !== currentUser.username);
       } else {
         reactions[reaction] += 1;
         reactedBy[reaction] = [...(reactedBy[reaction] || []), currentUser.username];
@@ -661,7 +1174,7 @@ function ProfilePassportModal({ username, sparks, setSparks, currentUser, onClos
   if (!username) return null;
 
   const userSparks = sparks.filter(s => s.username === username);
-  const totalReactions = userSparks.reduce((sum,s) => sum + Object.values(s.reactions).reduce((a,b) => a+b, 0), 0);
+  const totalReactions = userSparks.reduce((sum,s) => sum + Object.values(s.reactions ?? {}).reduce((a,b) => a+b, 0), 0);
   const age = profile?.birthYear ? calcAge(profile.birthYear, profile.birthMonth, profile.birthDay) : null;
 
   return (
@@ -781,7 +1294,7 @@ function ProfilePassportModal({ username, sparks, setSparks, currentUser, onClos
                               <Text fontSize="xs" fontWeight="800" color={BROWN}>{s.reactions[label]}</Text>
                             </Flex>
                           ))}
-                          {Object.values(s.reactions).every(v=>v===0) && <Text fontSize="xs" color="gray.400" px={1}>No reactions yet</Text>}
+                          {Object.values(s.reactions ?? {}).every(v=>v===0) && <Text fontSize="xs" color="gray.400" px={1}>No reactions yet</Text>}
                         </Flex>
                       )}
                     </Box>
@@ -804,36 +1317,93 @@ type SignUpStep = "welcome" | "about" | "spark" | "preview" | "signin" | "forgot
 
 const STEP_PROGRESS: Record<SignUpStep, number> = { welcome:0, about:33, spark:66, preview:90, signin:0, forgotpw:0 };
 
+// objectPosition tuned per image so the model's face, arms, logo & banner all stay visible
+const IMG_FOCUS: Record<string, string> = {
+  "/images/icreate.africa1.png": "50% 18%",  // kneeling dancer — arms up, logo top-right
+  "/images/icreate.africa2.png": "50% 10%",  // arms fully raised — extra headroom at top
+  "/images/icreate.africa3.png": "50% 15%",  // standing — face & logo centred
+};
+
 function FormShell({ children, title, subtitle, step }: {
   children: React.ReactNode; title: string; subtitle?: string; step: SignUpStep;
 }) {
+  const stepImage =
+    step === "about"                         ? "/images/icreate.africa2.png"
+    : step === "spark" || step === "preview" ? "/images/icreate.africa3.png"
+    :                                          "/images/icreate.africa1.png";
+  const focus = IMG_FOCUS[stepImage];
+
   return (
-    <Box minH="100vh" bg={CREAM}>
+    <Box minH="100vh" bg="white">
       <Flex minH="100vh" direction={{ base:"column", lg:"row" }}>
-        <Box display={{ base:"none", lg:"flex" }} flex={1} flexDirection="column" justifyContent="center" alignItems="center" px={12}
-          style={{ background:`linear-gradient(160deg,${BROWN} 0%,#8B3A0F 60%,${ORANGE} 100%)` }}>
-          <VStack spacing={5} maxW="320px" textAlign="center">
-            <CreateAfricaLogo size={64} />
-            <Heading color="white" fontSize="3xl" fontWeight="900" lineHeight={1.2}>Show your spark.</Heading>
-            <Text color="rgba(255,255,255,0.75)" fontSize="md" lineHeight="tall">Your gift belongs to Africa. Share it. Own it. Grow it.</Text>
-            <HStack spacing={6} pt={2}>
-              {[["🌍","54+","countries"],["✨","1,000","tokens"],["🔥","Free","forever"]].map(([e,v,l]) => (
-                <VStack key={l} spacing={0}><Text fontSize="lg">{e}</Text><Text color="white" fontWeight="900" fontSize="md">{v}</Text><Text color="rgba(255,255,255,0.55)" fontSize="11px">{l}</Text></VStack>
-              ))}
-            </HStack>
-          </VStack>
+
+        {/* ── Desktop left panel: image fills edge-to-edge, no gaps ── */}
+        <Box
+          display={{ base:"none", lg:"block" }}
+          flex={1}
+          position="relative"
+          overflow="hidden"
+        >
+          <img
+            key={stepImage}
+            src={stepImage}
+            alt=""
+            style={{
+              position: "absolute",
+              top: 0, left: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              objectPosition: focus,
+              display: "block",
+            }}
+          />
         </Box>
-        <Flex flex={{ base:1, lg:"0 0 520px" }} direction="column" justify="center" align="center" px={{ base:5, sm:10 }} py={10} bg="white" overflowY="auto" minH={{ lg:"100vh" }}>
-          <Box w="full" maxW="420px">
-            <Box display={{ base:"block", lg:"none" }} mb={4} textAlign="center"><CreateAfricaLogo size={44} /></Box>
+
+        {/* ── Form panel ── */}
+        <Flex
+          flex={{ base:1, lg:"0 0 480px" }}
+          direction="column"
+          justify="center"
+          align="center"
+          px={{ base:6, sm:12 }}
+          py={10}
+          bg="white"
+          overflowY="auto"
+          minH={{ lg:"100vh" }}
+          borderLeft={{ lg:"1px solid" }}
+          borderColor={{ lg:"gray.100" }}
+        >
+          <Box w="full" maxW="380px">
+
+            {/* Mobile: fixed-height image strip, cover-cropped */}
+            {(step === "welcome" || step === "signin") && (
+              <Box display={{ base:"block", lg:"none" }} mb={6} mx={-6} h="260px" overflow="hidden" position="relative">
+                <img
+                  src={stepImage}
+                  alt=""
+                  style={{
+                    position: "absolute",
+                    top: 0, left: 0,
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    objectPosition: focus,
+                    display: "block",
+                  }}
+                />
+              </Box>
+            )}
+
             {step!=="welcome" && step!=="signin" && step!=="forgotpw" && (
               <Box mb={5}>
                 <Progress value={STEP_PROGRESS[step]} size="xs" colorScheme="orange" rounded="full" mb={3} />
                 <Text fontSize="xs" color="gray.400" fontWeight="600">Step {step==="about"?1:step==="spark"?2:3} of 3</Text>
               </Box>
             )}
+
             <Heading size="lg" color={BROWN} fontWeight="900" mb={0.5}>{title}</Heading>
-            {subtitle && <Text fontSize="sm" color="gray.400" mb={4}>{subtitle}</Text>}
+            {subtitle && <Text fontSize="sm" color="gray.400" mb={5}>{subtitle}</Text>}
             {children}
           </Box>
         </Flex>
@@ -877,7 +1447,12 @@ function SignUpScreen({ onDone }: {
   const [usernameStatus, setUsernameStatus] = useState<"idle"|"checking"|"available"|"taken">("idle");
   const picRef = useRef<HTMLInputElement>(null);
   const toast  = useToast();
-  const greeting = GREETINGS[Math.floor(Date.now() / 86400000) % GREETINGS.length];
+  const [greetingIdx, setGreetingIdx] = useState(() => Math.floor(Math.random() * GREETINGS.length));
+  useEffect(() => {
+    const t = setInterval(() => setGreetingIdx(i => (i + 1) % GREETINGS.length), 3000);
+    return () => clearInterval(t);
+  }, []);
+  const greeting = GREETINGS[greetingIdx];
 
   const AVAILABLE_MSGS = [
     "🔥 That's a fire username — it's all yours!",
@@ -994,11 +1569,12 @@ function SignUpScreen({ onDone }: {
   if (step==="welcome") return (
     <FormShell title="Show your spark." subtitle="Africa's home for creators. Join free today." step={step}>
       <VStack spacing={4} mt={2}>
-        <Box w="full" bg={CREAM} rounded="xl" px={4} py={3} border="1px solid" borderColor="orange.100" textAlign="center">
-          <Text fontSize="xl" fontWeight="900" color={BROWN}>{greeting.text}</Text>
-          <Text fontSize="xs" color="gray.500" mt={0.5}>
-            <Text as="span" fontStyle="italic">&ldquo;{greeting.meaning}&rdquo;</Text>
-            {" "}— {greeting.language} · {greeting.place}
+        <Box w="full" bg={CREAM} rounded="2xl" px={5} py={4} border="1.5px solid" borderColor="orange.100" textAlign="center">
+          <style>{`@keyframes fadeGreeting{0%{opacity:0;transform:translateY(6px)}30%{opacity:1;transform:translateY(0)}80%{opacity:1}100%{opacity:0}}`}</style>
+          <Text key={greeting.text} fontSize="2xl" fontWeight="900" color={BROWN} style={{ animation:"fadeGreeting 3s ease forwards" }}>{greeting.text}</Text>
+          <Text fontSize="xs" color="gray.500" mt={1}>
+            <Text as="span" fontWeight="600" color={ORANGE}>{greeting.meaning}</Text>
+            {" · "}{greeting.language} — {greeting.place}
           </Text>
         </Box>
         <Button w="full" size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={()=>setStep("about")}>Join &amp; Show My Spark 🔥</Button>
@@ -1215,11 +1791,15 @@ function SignUpScreen({ onDone }: {
 }
 
 // ─── Upload Form ──────────────────────────────────────────────────────────────
-function UploadForm({ user, sparks, onPost }: {
+function UploadForm({ user, sparks, onPost, onMilestone, defaultCaption, onUploadStart, onProgress }: {
   user: User; sparks: SparkPost[];
   onPost: (spark: SparkPost) => void;
+  onMilestone?: (type: "first_spark") => void;
+  defaultCaption?: string;
+  onUploadStart?: () => void;
+  onProgress?: (pct: number) => void;
 }) {
-  const [caption,      setCaption]      = useState("");
+  const [caption,      setCaption]      = useState(defaultCaption ?? "");
   const [sparkType,    setSparkType]    = useState<SparkType>("new");
   const [linkedSparkId,setLinkedSparkId]= useState<number|undefined>();
   const [mediaFile,    setMediaFile]    = useState<File|null>(null);
@@ -1229,6 +1809,7 @@ function UploadForm({ user, sparks, onPost }: {
   const [posting,      setPosting]      = useState(false);
   const [adminMode,    setAdminMode]    = useState(false);
   const [pinPost,      setPinPost]      = useState(false);
+  const [uploadPct,    setUploadPct]    = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const toast   = useToast();
   const { isOpen:beyondOpen, onOpen:openBeyond, onClose:closeBeyond } = useDisclosure();
@@ -1238,14 +1819,20 @@ function UploadForm({ user, sparks, onPost }: {
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if(!f) return;
     if (!f.type.startsWith("video/")&&!f.type.startsWith("image/")) { toast({ title:"Please select a video or image", status:"warning", duration:3000, isClosable:true }); return; }
+    if (f.type.startsWith("video/") && f.size > 150 * 1024 * 1024) {
+      toast({ title:"Video is very large (>150MB)", description:"Upload may be slow. Try trimming or compressing the video first for a faster experience.", status:"warning", duration:6000, isClosable:true });
+    }
     setMediaFile(f); setMediaType(f.type.startsWith("image/")?"image":"video"); setMediaPreview(URL.createObjectURL(f));
   };
 
   const handleShare = async () => {
     if (!mediaFile) { toast({ title:"Upload a photo or video first!", status:"warning", duration:2500, isClosable:true }); return; }
-    setPosting(true);
+    setPosting(true); setUploadPct(0);
+    // Close form immediately — upload continues in background
+    onUploadStart?.();
+    const reportProgress = (pct: number) => { setUploadPct(pct); onProgress?.(pct); };
     try {
-      const mediaUrl  = await uploadMedia(mediaFile, "sparks");
+      const mediaUrl  = await uploadMedia(mediaFile, "sparks", reportProgress);
       const newId     = Date.now();
       const journeyId = sparkType==="ongoing"&&linkedSparkId ? sparks.find(s=>s.id===linkedSparkId)?.journeyId??String(newId) : String(newId);
       const spark: SparkPost = {
@@ -1261,6 +1848,7 @@ function UploadForm({ user, sparks, onPost }: {
       };
       await saveSpark(spark);
       onPost(spark);
+      onMilestone?.("first_spark");
       sendEmail("spark_posted", user.email, user.name, user.username, {
         sparkType: spark.sparkType, reach: spark.reach, caption: spark.caption,
       });
@@ -1268,7 +1856,7 @@ function UploadForm({ user, sparks, onPost }: {
       if (fileRef.current) fileRef.current.value="";
       toast({ title:"Your spark is live! 🔥", description:"Your community can see your spark. Keep shining! 🌍", status:"success", duration:4000, isClosable:true });
     } catch(e) { toast({ title:"Post failed", description:String(e), status:"error", duration:4000, isClosable:true }); }
-    setPosting(false);
+    setPosting(false); setUploadPct(0);
   };
 
   return (
@@ -1294,9 +1882,21 @@ function UploadForm({ user, sparks, onPost }: {
         </Box>
       )}
       {!mediaPreview ? (
-        <Center w="full" minH="100px" border="2px dashed" borderColor="orange.200" rounded="2xl" bg="orange.50" cursor="pointer" _hover={{ bg:"orange.100", borderColor:ORANGE }} transition="all 0.2s" flexDirection="column" gap={2} onClick={()=>fileRef.current?.click()}>
+        <Center w="full" minH="100px" border="2px dashed" borderColor="orange.200" rounded="2xl" bg="orange.50" cursor="pointer" _hover={{ bg:"orange.100", borderColor:ORANGE }} transition="all 0.2s" flexDirection="column" gap={2}
+          onClick={()=>fileRef.current?.click()}
+          onDragOver={e=>{ e.preventDefault(); e.stopPropagation(); }}
+          onDrop={e=>{
+            e.preventDefault(); e.stopPropagation();
+            const f = e.dataTransfer.files?.[0];
+            if (!f) return;
+            if (!f.type.startsWith("video/") && !f.type.startsWith("image/")) { toast({ title:"Please drop a video or image", status:"warning", duration:3000, isClosable:true }); return; }
+            if (f.type.startsWith("video/") && f.size > 150 * 1024 * 1024) {
+              toast({ title:"Video is very large (>150MB)", description:"Upload may be slow. Try trimming or compressing first.", status:"warning", duration:6000, isClosable:true });
+            }
+            setMediaFile(f); setMediaType(f.type.startsWith("image/")?"image":"video"); setMediaPreview(URL.createObjectURL(f));
+          }}>
           <UploadIcon />
-          <Text fontWeight="700" color={ORANGE} fontSize="sm">Tap to upload a photo or video</Text>
+          <Text fontWeight="700" color={ORANGE} fontSize="sm">Tap or drag & drop a photo / video</Text>
           <Text fontSize="xs" color="gray.400">JPG · PNG · MP4 · MOV</Text>
           <input ref={fileRef} type="file" accept="video/*,image/*" style={{ display:"none" }} onChange={handleFile} />
         </Center>
@@ -1306,7 +1906,16 @@ function UploadForm({ user, sparks, onPost }: {
           <Button size="xs" position="absolute" top={2} right={2} rounded="full" bg="blackAlpha.700" color="white" _hover={{ bg:"red.500" }} onClick={()=>{ setMediaFile(null); setMediaPreview(null); if(fileRef.current) fileRef.current.value=""; }}>✕</Button>
         </Box>
       )}
-      <Textarea placeholder="Add a note about this spark…" value={caption} onChange={e=>setCaption(e.target.value)} rows={2} border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" resize="none" />
+      {defaultCaption && (
+        <Flex align="center" gap={2} bg="orange.50" rounded="xl" px={3} py={2} border="1.5px solid" borderColor={ORANGE}>
+          <Text fontSize="14px">🔥</Text>
+          <Box flex={1}>
+            <Text fontSize="10px" fontWeight="900" color={ORANGE} textTransform="uppercase" letterSpacing="wide">Challenge Mode</Text>
+            <Text fontSize="10px" color={BROWN} fontWeight="600">{CHALLENGE_HASHTAG} — edit below if you like</Text>
+          </Box>
+        </Flex>
+      )}
+      <Textarea placeholder="Add a note about this spark…" value={caption} onChange={e=>setCaption(e.target.value)} rows={defaultCaption ? 3 : 2} border="2px solid" borderColor="orange.100" _focus={{ borderColor:ORANGE, boxShadow:"none" }} rounded="xl" bg="orange.50" resize="none" />
       <ReachSelector reach={reach} setReach={setReach} onOpenBeyond={openBeyond} />
       {isAdmin && (
         <Box w="full" bg="blue.50" rounded="xl" p={4} border="2px solid" borderColor="blue.200">
@@ -1332,7 +1941,18 @@ function UploadForm({ user, sparks, onPost }: {
           </VStack>
         </Box>
       )}
-      <Button w="full" size="lg" bg={reach==="beyond"?GOLD:ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ opacity:0.9 }} onClick={handleShare} isLoading={posting} loadingText="Sharing…">
+      {posting && (
+        <Box w="full">
+          <Flex justify="space-between" mb={1}>
+            <Text fontSize="xs" fontWeight="700" color={ORANGE}>
+              {uploadPct < 100 ? (mediaType === "image" ? "Compressing & uploading…" : "Uploading video…") : "Saving spark…"}
+            </Text>
+            {uploadPct > 0 && uploadPct < 100 && <Text fontSize="xs" fontWeight="800" color={ORANGE}>{uploadPct}%</Text>}
+          </Flex>
+          <Progress value={uploadPct < 100 ? uploadPct : 100} size="sm" colorScheme="orange" rounded="full" isIndeterminate={uploadPct === 100} />
+        </Box>
+      )}
+      <Button w="full" size="lg" bg={reach==="beyond"?GOLD:ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ opacity:0.9 }} onClick={handleShare} isLoading={posting} loadingText={uploadPct < 100 ? `Uploading ${uploadPct}%…` : "Saving…"}>
         {reach==="beyond" ? "✨ Share to The Great Beyond" : "Share My Spark 🔥"}
       </Button>
       <GreatBeyondModal isOpen={beyondOpen} onClose={closeBeyond} coins={user.coins} />
@@ -1340,19 +1960,137 @@ function UploadForm({ user, sparks, onPost }: {
   );
 }
 
+// ─── Social Share Button ──────────────────────────────────────────────────────
+const APP_URL = "https://www.icreate.africa";
+
+function ShareButton({ text, imageUrl }: { text: string; imageUrl?: string }) {
+  const [open, setOpen] = useState(false);
+  const toast = useToast();
+  const fullText = imageUrl ? `${text}\n${imageUrl}` : text;
+  const encoded = encodeURIComponent(`${fullText}\n${APP_URL}`);
+  const encodedUrl = encodeURIComponent(APP_URL);
+
+  const handleMain = () => {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      navigator.share({ text: fullText, url: APP_URL }).catch(() => {});
+    } else {
+      setOpen(p => !p);
+    }
+  };
+
+  const go = (url: string) => { window.open(url, "_blank", "noopener,noreferrer"); setOpen(false); };
+  const copy = () => {
+    navigator.clipboard.writeText(`${fullText}\n${APP_URL}`).then(() =>
+      toast({ title:"Copied! 🔗", status:"success", duration:2000, isClosable:true })
+    );
+    setOpen(false);
+  };
+
+  const options = [
+    { label:"WhatsApp",  icon:"💬", color:"#25D366", action: () => go(`https://wa.me/?text=${encoded}`) },
+    { label:"X",         icon:"𝕏",  color:"#000",    action: () => go(`https://twitter.com/intent/tweet?text=${encoded}`) },
+    { label:"Facebook",  icon:"f",  color:"#1877F2", action: () => go(`https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`) },
+    { label:"Copy link", icon:"🔗", color:BROWN,     action: copy },
+  ];
+
+  return (
+    <Box position="relative">
+      <Button size="sm" variant="ghost" color="gray.400" fontWeight="700" rounded="full" px={3} fontSize="xs"
+        _hover={{ bg:"orange.50", color:ORANGE }} onClick={handleMain}>
+        📤 Share
+      </Button>
+      {open && (
+        <>
+          {/* backdrop */}
+          <Box position="fixed" inset={0} zIndex={40} onClick={() => setOpen(false)} />
+          {/* dropdown */}
+          <Box position="absolute" bottom="calc(100% + 8px)" right={0} zIndex={50}
+            bg="white" rounded="2xl" shadow="2xl" border="1px solid" borderColor="orange.100"
+            overflow="hidden" minW="160px">
+            <Box h="3px" bg={ORANGE} />
+            {options.map(o => (
+              <Flex key={o.label} align="center" gap={3} px={4} py={3} cursor="pointer"
+                _hover={{ bg:"orange.50" }} onClick={o.action}
+                borderBottom="1px solid" borderColor="gray.50">
+                <Text fontSize="14px" w="20px" textAlign="center" color={o.color} fontWeight="900">{o.icon}</Text>
+                <Text fontSize="sm" fontWeight="700" color={BROWN}>{o.label}</Text>
+              </Flex>
+            ))}
+          </Box>
+        </>
+      )}
+    </Box>
+  );
+}
+
+// ─── Learn & Spark Challenge Card ─────────────────────────────────────────────
+const CHALLENGE_UNLOCK = new Date("2026-04-01T00:00:00");
+const CHALLENGE_HASHTAG = "#WhatIsWelcomeInYourLanguage";
+const CHALLENGE_CAPTION = `How do you say "Welcome" in your language? ✨ ${CHALLENGE_HASHTAG} #LearnAndSpark #icreateafrica`;
+
+function LearnSparkCard({ onJoinChallenge, onOpenBeyond }: { onJoinChallenge: () => void; onOpenBeyond: () => void }) {
+  const [exIdx, setExIdx] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setExIdx(i => (i + 1) % GREETINGS.length), 2800);
+    return () => clearInterval(t);
+  }, []);
+  const example = GREETINGS[exIdx];
+
+  return (
+    <Box mx={4} mb={2} rounded="2xl" overflow="hidden" border="1.5px solid" borderColor="orange.100" bg="#FFFBF5">
+      <Box h="3px" style={{ background:`linear-gradient(90deg,${ORANGE},${GOLD},${ORANGE})` }} />
+      <Box px={4} py={4}>
+        <Flex align="center" gap={3} mb={3}>
+          <Box w="36px" h="36px" rounded="lg" bg={ORANGE} display="flex" alignItems="center" justifyContent="center" flexShrink={0}>
+            <Text fontSize="18px">🌍</Text>
+          </Box>
+          <Box flex={1}>
+            <Text fontSize="9px" fontWeight="900" color={ORANGE} textTransform="uppercase" letterSpacing="widest">Learn & Spark</Text>
+            <Text fontWeight="900" color={BROWN} fontSize="sm" lineHeight={1.3}>{CHALLENGE_HASHTAG}</Text>
+          </Box>
+        </Flex>
+
+        {/* Cycling language example */}
+        <Box bg="white" rounded="xl" px={3} py={2.5} mb={3} border="1px solid" borderColor="orange.100">
+          <Text fontSize="9px" fontWeight="700" color="gray.400" textTransform="uppercase" letterSpacing="wide" mb={0.5}>Did you know…</Text>
+          <Text key={example.text} fontSize="lg" fontWeight="900" color={BROWN}>
+            &ldquo;{example.text}&rdquo; — {example.language}
+          </Text>
+          <Text fontSize="10px" color="gray.400">{example.meaning} · {example.place}</Text>
+        </Box>
+
+        <Flex gap={2}>
+          <Button flex={1} size="sm" bg={ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={onJoinChallenge}>
+            🔥 Say It
+          </Button>
+          <Button flex={1} size="sm" variant="outline" borderColor={GOLD} color={BROWN} fontWeight="800" rounded="xl" _hover={{ bg:"orange.50" }}
+            onClick={onOpenBeyond}>
+            🎁 Great Beyond
+          </Button>
+        </Flex>
+      </Box>
+    </Box>
+  );
+}
+
 // ─── Feed Screen ──────────────────────────────────────────────────────────────
-function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: {
+function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile, tasks, onMilestone, onJoinChallenge, onOpenBeyond, hiddenSparks, onRefresh }: {
   user: User; sparks: SparkPost[];
   setSparks: React.Dispatch<React.SetStateAction<SparkPost[]>>;
   onShowMySpark: () => void;
   setViewProfile: (u:string)=>void;
+  tasks: Tasks;
+  onMilestone: (type: "reactions_5" | "reactions_10", total: number) => void;
+  onJoinChallenge: () => void;
+  onOpenBeyond: () => void;
+  hiddenSparks: Set<number>;
+  onRefresh: () => Promise<void>;
 }) {
-  const [myReactions, setMyReactions] = useState<Record<number, Reaction[]>>({});
-  const [prevOpen,    setPrevOpen]    = useState<Record<number,boolean>>({});
-  const [reactPeek,   setReactPeek]   = useState<{ sparkId:number; reaction:Reaction; names:string[] }|null>(null);
-  const [displayedSparks, setDisplayedSparks] = useState<SparkPost[]>([]);
-  const [isRecycling, setIsRecycling] = useState(false);
-  const observerTarget = useRef<HTMLDivElement>(null);
+  const [myReactions,  setMyReactions]  = useState<Record<number, Reaction[]>>({});
+  const [prevOpen,     setPrevOpen]     = useState<Record<number,boolean>>({});
+  const [reactPeek,    setReactPeek]    = useState<{ sparkId:number; reaction:Reaction; names:string[] }|null>(null);
+  const [refreshing,   setRefreshing]   = useState(false);
+  const totalReactionsRef = useRef(tasks.total_reactions_given);
 
   // Initialise from DB — support multiple reactions per post
   useEffect(() => {
@@ -1364,38 +2102,6 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
     setMyReactions(initial);
   }, [sparks, user.username]);
 
-  // Initialize displayed sparks
-  useEffect(() => {
-    setDisplayedSparks(sparks);
-    setIsRecycling(false);
-  }, [sparks]);
-
-  // Infinite scroll - recycle content when reaching bottom
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      entries => {
-        if (entries[0].isIntersecting && sparks.length > 0) {
-          setIsRecycling(true);
-          setTimeout(() => {
-            setDisplayedSparks(prev => [...prev, ...sparks]);
-            setIsRecycling(false);
-          }, 500);
-        }
-      },
-      { threshold: 0.1 }
-    );
-
-    if (observerTarget.current) {
-      observer.observe(observerTarget.current);
-    }
-
-    return () => {
-      if (observerTarget.current) {
-        observer.unobserve(observerTarget.current);
-      }
-    };
-  }, [sparks]);
-
   const handleReact = async (sparkId: number, reaction: Reaction) => {
     const current = myReactions[sparkId] ?? [];
     const alreadyReacted = current.includes(reaction);
@@ -1406,7 +2112,7 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
       const reactedBy = { ...s.reactedBy };
       if (alreadyReacted) {
         reactions[reaction] = Math.max(0, reactions[reaction] - 1);
-        reactedBy[reaction] = reactedBy[reaction].filter(u => u !== user.username);
+        reactedBy[reaction] = (reactedBy[reaction] || []).filter(u => u !== user.username);
       }
       if (!alreadyReacted) {
         reactions[reaction] += 1;
@@ -1415,6 +2121,15 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
       updateReactions(sparkId, reactions, reactedBy);
       return { ...s, reactions, reactedBy };
     }));
+    if (!alreadyReacted) {
+      totalReactionsRef.current += 1;
+      const total = totalReactionsRef.current;
+      if (total >= 10 && !tasks.reactions_10_claimed) {
+        onMilestone("reactions_10", total);
+      } else if (total >= 5 && !tasks.reactions_5_claimed) {
+        onMilestone("reactions_5", total);
+      }
+    }
   };
 
   return (
@@ -1422,17 +2137,65 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
       <Box display={{ base:"block", xl:"none" }} px={4} pt={4} pb={2}>
         <Button w="full" size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="2xl" _hover={{ bg:"#c44d16" }} shadow="md" onClick={onShowMySpark}>✨ Show Your Spark</Button>
       </Box>
-      <Flex align="center" gap={3} px={5} mt={{ base:4, xl:6 }} mb={4}>
+
+      {/* ── Great Spark Beyond Banner ─────────────────────────────────────── */}
+      <Box px={4} mt={{ base:4, xl:6 }} mb={4}>
+        <MotionBox
+          initial={{ opacity:0, y:-10 }} animate={{ opacity:1, y:0 }} transition={{ duration:0.4 }}
+          bg="linear-gradient(135deg, #1a0a00 0%, #3d1a00 50%, #5C2D0E 100%)"
+          rounded="2xl" overflow="hidden" shadow="xl" border="2px solid" borderColor={GOLD}
+          position="relative"
+        >
+          {/* shimmer bar */}
+          <Box h="4px" bg={`linear-gradient(90deg, ${GOLD}, #fff8dc, ${GOLD})`} />
+          <Box px={5} py={4}>
+            <Flex align="center" gap={2} mb={1}>
+              <Text fontSize="18px">🔒</Text>
+              <Text fontSize="11px" fontWeight="800" color={GOLD} textTransform="uppercase" letterSpacing="widest">Coming Soon</Text>
+            </Flex>
+            <Text fontWeight="900" color="white" fontSize={{ base:"xl", md:"2xl" }} lineHeight="short" mb={1}>
+              ✨ The Great Spark Beyond
+            </Text>
+            <Text fontWeight="800" color={GOLD} fontSize="sm" mb={3}>
+              Launching April 5th, 2026
+            </Text>
+            <Box bg="rgba(255,255,255,0.07)" rounded="xl" px={4} py={3} mb={3} borderLeft="3px solid" borderColor={GOLD}>
+              <Text color="white" fontSize="sm" fontWeight="600" lineHeight="tall">
+                Keep sharing your sparks and earning coins! When The Great Spark Beyond launches,
+                use your coins to <Text as="span" color={GOLD} fontWeight="900">gain massive reach</Text> and{" "}
+                <Text as="span" color={GOLD} fontWeight="900">encourage others</Text> across the platform.
+              </Text>
+            </Box>
+            <Flex gap={3} flexWrap="wrap">
+              <Flex align="center" gap={2} bg="rgba(245,166,35,0.15)" rounded="full" px={3} py={1.5}>
+                <Text fontSize="14px">🔥</Text>
+                <Text fontSize="xs" fontWeight="800" color={GOLD}>Share Sparks → Earn Coins</Text>
+              </Flex>
+              <Flex align="center" gap={2} bg="rgba(245,166,35,0.15)" rounded="full" px={3} py={1.5}>
+                <Text fontSize="14px">🚀</Text>
+                <Text fontSize="xs" fontWeight="800" color={GOLD}>Coins → Greater Reach</Text>
+              </Flex>
+            </Flex>
+          </Box>
+        </MotionBox>
+      </Box>
+
+      <Flex align="center" gap={3} px={4} mb={4}>
         <Box flex={1} h="1px" bg="orange.100" />
-        <Text fontSize="10px" fontWeight="800" color="gray.400" textTransform="uppercase" letterSpacing="widest">Community Sparks</Text>
+        <Text fontSize="10px" fontWeight="800" color="gray.400" textTransform="uppercase" letterSpacing="widest">My Sparks</Text>
         <Box flex={1} h="1px" bg="orange.100" />
+        <Button size="xs" variant="ghost" color={ORANGE} fontWeight="800" px={2} _hover={{ bg:"orange.50" }}
+          isLoading={refreshing}
+          onClick={async () => { setRefreshing(true); await onRefresh(); setRefreshing(false); }}>
+          🔄
+        </Button>
       </Flex>
-      {sparks.length===0 && (
-        <Center py={16} flexDirection="column" gap={3}>
-          <Text fontSize="48px">🌍</Text>
-          <Text fontWeight="800" color={BROWN} fontSize="lg">No sparks yet!</Text>
-          <Text color="gray.400" fontSize="sm" textAlign="center" px={6}>Be the first to show your spark.</Text>
-          <Button mt={2} bg={ORANGE} color="white" fontWeight="800" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={onShowMySpark}>Share My Spark</Button>
+      {sparks.filter(s => s.userId === user.id && s.userId !== "icreate-admin").length === 0 && (
+        <Center py={12} flexDirection="column" gap={3}>
+          <Text fontSize="48px">🌟</Text>
+          <Text fontWeight="800" color={BROWN} fontSize="lg">No sparks yet</Text>
+          <Text color="gray.400" fontSize="sm" textAlign="center" px={6}>Share your first spark to start earning coins for The Great Spark Beyond!</Text>
+          <Button mt={2} bg={ORANGE} color="white" fontWeight="800" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={onShowMySpark}>Share My Spark 🔥</Button>
         </Center>
       )}
       {reactPeek && (
@@ -1467,12 +2230,56 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
         </Box>
       )}
       <VStack spacing={5} px={4} pb={8}>
-        <AnimatePresence>
-          {displayedSparks.map((s, idx) => {
-            const jt = getJourneyTotal(sparks, s.journeyId);
-            const linked = s.linkedSparkId ? sparks.find(p=>p.id===s.linkedSparkId) : null;
-            return (
-              <MotionBox key={`${s.id}-${idx}`} initial={{ opacity:0, y:-16 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, scale:0.95 }} transition={{ duration:0.3 }} w="full" bg="white" rounded="2xl" shadow="md" overflow="hidden">
+          {(() => {
+            const items: React.ReactElement[] = [];
+            const now = Date.now();
+
+            // Broadcasts: match by userId OR username
+            const adminSparks = sparks.filter(s =>
+              s.userId === "icreate-admin" || s.username === "icreate.africa"
+            );
+            const broadcasts = adminSparks.filter(s =>
+              !hiddenSparks.has(s.id) &&
+              (!s.broadcastExpiresAt || new Date(s.broadcastExpiresAt).getTime() > now) &&
+              (!s.targetCountry || s.targetCountry === "" || s.targetCountry === user.country)
+            );
+
+            const visibleSparks = sparks.filter(s => {
+              if (s.userId === "icreate-admin" || s.username === "icreate.africa") return false;
+              if (hiddenSparks.has(s.id)) return false;
+              // Feed is locked to the current user's own sparks only
+              if (s.userId !== user.id) return false;
+              return true;
+            });
+
+            // Pin all valid broadcasts at the top of the feed
+            broadcasts.forEach(b => {
+              items.push(
+                <Box key={`bc-${b.id}`} w="full">
+                  <MotionBox initial={{ opacity:0, y:-16 }} animate={{ opacity:1, y:0 }} transition={{ duration:0.3 }} w="full" bg="white" rounded="2xl" shadow="md" overflow="hidden" border="2px solid" borderColor="#059669">
+                    <Box h="4px" bg="#059669" />
+                    <Flex px={4} pt={3} pb={1} align="center" gap={2}>
+                      <Box w="28px" h="28px" rounded="full" overflow="hidden" border="1.5px solid" borderColor="green.200" flexShrink={0}><img src="/images/logo.jpg" style={{ width:"100%", height:"100%", objectFit:"cover" }} /></Box>
+                      <Box flex={1}><Text fontWeight="900" color="#059669" fontSize="sm">icreate.africa</Text><Text fontSize="10px" color="gray.400">@icreate.africa</Text></Box>
+                      <Text fontSize="10px" fontWeight="800" color="white" bg="#059669" px={2} py={0.5} rounded="full">📢 Official</Text>
+                    </Flex>
+                    <SparkMedia mediaUrl={b.mediaUrl} mediaType={b.mediaType} maxH="500px" />
+                    <Box px={4} pt={3} pb={4}><Text color="gray.800" fontWeight="600" fontSize="sm" lineHeight="tall">{b.caption}</Text></Box>
+                  </MotionBox>
+                </Box>
+              );
+            });
+
+            // Only show the current user's own sparks
+            const feedSparks = visibleSparks;
+            feedSparks.forEach((s, idx) => {
+              if (idx === 3 && feedSparks.length >= 4) {
+                items.push(<Box key="challenge-card" w="full"><LearnSparkCard onJoinChallenge={onJoinChallenge} onOpenBeyond={onOpenBeyond} /></Box>);
+              }
+              const jt = getJourneyTotal(sparks, s.journeyId);
+              const linked = s.linkedSparkId ? sparks.find(p=>p.id===s.linkedSparkId) : null;
+              items.push(
+                <Box key={`${s.id}`} w="full" bg="white" rounded="2xl" shadow="md" overflow="hidden">
                 <Box h="4px" bg={s.reach==="beyond"?GOLD:s.pinned?"#3B82F6":ORANGE} />
                 <Flex px={4} pt={4} pb={2} align="center" gap={3}>
                   <Box cursor="pointer" onClick={()=>setViewProfile(s.username)}><UserAvatar user={{ name:s.name, profilePicUrl:s.profilePicUrl }} size="md" /></Box>
@@ -1489,6 +2296,7 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
                       {s.sparkType==="new"?"New Spark":"Ongoing Spark"}
                     </Text>
                     {s.reach==="beyond" && <Text fontSize="xs" fontWeight="800" color="white" bg={BROWN} px={2} py={0.5} rounded="full">✨ Great Beyond</Text>}
+                    {s.userId==="icreate-admin" && <Text fontSize="xs" fontWeight="800" color="white" bg="#059669" px={2} py={0.5} rounded="full">📢 Official</Text>}
                   </HStack>
                 </Flex>
                 {s.sparkType==="ongoing" && (
@@ -1515,7 +2323,7 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
                 )}
                 <SparkMedia mediaUrl={s.mediaUrl} mediaType={s.mediaType} maxH="500px" />
                 <Box px={4} pt={3} pb={1}><Text color="gray.800" fontWeight="600" fontSize="sm" lineHeight="tall">{s.caption}</Text></Box>
-                <Flex px={4} pb={5} pt={3} gap={2} flexWrap="wrap">
+                <Flex px={4} pb={4} pt={3} gap={2} flexWrap="wrap" align="center">
                   {REACTIONS.map(({ label, emoji }) => {
                     const active = myReactions[s.id]?.includes(label) ?? false;
                     return (
@@ -1530,40 +2338,67 @@ function FeedScreen({ user, sparks, setSparks, onShowMySpark, setViewProfile }: 
                       </Button>
                     );
                   })}
+                  <Box ml="auto">
+                    <ShareButton
+                      text={`✨ @${s.username} on icreate.africa — "${s.caption.slice(0,100)}${s.caption.length>100?"…":""}"\n#icreateafrica #ShowYourSpark`}
+                      imageUrl={s.mediaType==="image" ? s.mediaUrl : s.profilePicUrl}
+                    />
+                  </Box>
                 </Flex>
-              </MotionBox>
+              </Box>
             );
-          })}
-        </AnimatePresence>
-        {sparks.length > 0 && (
-          <>
-            <div ref={observerTarget} style={{ height: '20px', width: '100%' }} />
-            {isRecycling && (
-              <Center py={4}>
-                <Spinner color={ORANGE} size="md" />
-                <Text ml={3} fontSize="sm" color="gray.400" fontWeight="600">Loading more sparks...</Text>
-              </Center>
-            )}
-          </>
-        )}
+            }); // end feedSparks.forEach
+            return items;
+          })()}
       </VStack>
     </Box>
   );
 }
 
 // ─── My Spark Screen ──────────────────────────────────────────────────────────
-function MySparkScreen({ user, sparks, onPost }: { user: User; sparks: SparkPost[]; onPost: (spark: SparkPost) => void }) {
+function MySparkScreen({ user, sparks, onPost, onMilestone, challengeMode, onClearChallenge, onDelete, onToggleHide, hiddenSparks, onUploadStart, onProgress }: {
+  user: User; sparks: SparkPost[];
+  onPost: (spark: SparkPost) => void;
+  onMilestone?: (type: "first_spark") => void;
+  challengeMode?: boolean;
+  onClearChallenge?: () => void;
+  onDelete: (id: number) => void;
+  onToggleHide: (id: number) => void;
+  hiddenSparks: Set<number>;
+  onUploadStart?: () => void;
+  onProgress?: (pct: number) => void;
+}) {
+  const [menuOpen,      setMenuOpen]      = useState<number|null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<number|null>(null);
   const mySparks = sparks.filter(s=>s.userId===user.id);
   return (
     <Box pb={8}>
-      {mySparks.length===0 && (
+      {challengeMode ? (
+        <Box mx={4} mt={5} rounded="2xl" overflow="hidden" border="2px solid" borderColor={ORANGE} bg="#FFFBF5">
+          <Box h="3px" style={{ background:`linear-gradient(90deg,${ORANGE},${GOLD},${ORANGE})` }} />
+          <Box px={4} py={4}>
+            <Flex align="center" justify="space-between" mb={1}>
+              <HStack spacing={2}>
+                <Text fontSize="16px">🔥</Text>
+                <Text fontWeight="900" color={BROWN} fontSize="sm">Learn & Spark Challenge</Text>
+              </HStack>
+              <Button variant="ghost" size="xs" color="gray.400" px={1} _hover={{ color:BROWN }} onClick={onClearChallenge}>✕</Button>
+            </Flex>
+            <Text fontSize="xs" color={ORANGE} fontWeight="800" mb={1}>{CHALLENGE_HASHTAG}</Text>
+            <Text fontSize="xs" color="gray.600" lineHeight="tall">
+              How do you say &ldquo;Welcome&rdquo; in your language? Say it, film it, share it — doesn&apos;t have to be your native tongue. <Text as="span" fontWeight="700" color={BROWN}>We&apos;re all Africans here. 🌍</Text>
+            </Text>
+          </Box>
+        </Box>
+      ) : mySparks.length === 0 ? (
         <Box mx={4} mt={5} bg={ORANGE} rounded="2xl" px={4} py={4}>
           <Text fontWeight="800" color="white" fontSize="sm" mb={1}>👋 Keep shining!</Text>
           <Text fontSize="xs" color="rgba(255,255,255,0.9)" lineHeight="tall">Share your next spark below. Keep videos under 15 seconds and let Africa see you! 🤍</Text>
         </Box>
-      )}
+      ) : null}
       <Box mx={4} mt={4} bg="white" rounded="2xl" shadow="md" overflow="hidden">
-        <Box h="4px" bg={ORANGE}/><Box p={5}><UploadForm user={user} sparks={sparks} onPost={onPost} /></Box>
+        <Box h="4px" bg={challengeMode ? GOLD : ORANGE}/>
+        <Box p={5}><UploadForm user={user} sparks={sparks} onPost={onPost} onMilestone={onMilestone} defaultCaption={challengeMode ? CHALLENGE_CAPTION : undefined} onUploadStart={onUploadStart} onProgress={onProgress} /></Box>
       </Box>
       {mySparks.length>0 && (
         <>
@@ -1575,16 +2410,38 @@ function MySparkScreen({ user, sparks, onPost }: { user: User; sparks: SparkPost
           <VStack spacing={4} px={4}>
             {mySparks.map(s=>{
               const jt = getJourneyTotal(sparks,s.journeyId);
+              const isHidden = hiddenSparks.has(s.id);
               return (
-                <Box key={s.id} w="full" bg="white" rounded="2xl" shadow="sm" overflow="hidden" border="1px solid" borderColor="orange.100">
-                  <Box h="3px" bg={s.reach==="beyond"?GOLD:ORANGE}/>
+                <Box key={s.id} w="full" bg="white" rounded="2xl" shadow="sm" overflow="hidden" border="1px solid" borderColor={isHidden?"gray.200":"orange.100"} opacity={isHidden?0.65:1} position="relative">
+                  <Box h="3px" bg={isHidden?"gray.300":s.reach==="beyond"?GOLD:ORANGE}/>
                   <Box p={4}>
                     <Flex justify="space-between" align="center" mb={3}>
-                      <HStack spacing={2}>
+                      <HStack spacing={2} flexWrap="wrap">
                         <Text fontSize="xs" fontWeight="700" color={s.sparkType==="new"?ORANGE:BROWN} bg={s.sparkType==="new"?"orange.50":"gray.100"} px={2} py={0.5} rounded="full">{s.sparkType==="new"?"New Spark":"Ongoing Spark"}</Text>
                         {s.reach==="beyond" && <Text fontSize="xs" fontWeight="800" color="white" bg={BROWN} px={2} py={0.5} rounded="full">✨ Great Beyond</Text>}
+                        {isHidden && <Text fontSize="xs" fontWeight="800" color="gray.400" bg="gray.100" px={2} py={0.5} rounded="full">🙈 Hidden</Text>}
                       </HStack>
-                      <Text fontSize="xs" color="gray.400">{jt>0?`${jt} reactions`:"0 reactions"}</Text>
+                      <Flex align="center" gap={2}>
+                        <Text fontSize="xs" color="gray.400">{jt>0?`${jt} reactions`:"0 reactions"}</Text>
+                        {/* ⋮ menu */}
+                        <Box position="relative">
+                          <Button size="xs" variant="ghost" color="gray.400" px={1} minW="24px" _hover={{ color:BROWN, bg:"orange.50" }} onClick={()=>setMenuOpen(menuOpen===s.id?null:s.id)}>⋮</Button>
+                          {menuOpen===s.id && (
+                            <>
+                              <Box position="fixed" inset={0} zIndex={30} onClick={()=>setMenuOpen(null)} />
+                              <Box position="absolute" right={0} top="calc(100% + 4px)" zIndex={40} bg="white" rounded="xl" shadow="xl" border="1px solid" borderColor="gray.100" overflow="hidden" minW="150px">
+                                <Box px={4} py={3} cursor="pointer" _hover={{ bg:"orange.50" }} onClick={()=>{ setMenuOpen(null); onToggleHide(s.id); }}>
+                                  <Text fontSize="sm" fontWeight="700" color={BROWN}>{isHidden?"👁 Unhide":"🙈 Hide from feed"}</Text>
+                                </Box>
+                                <Box h="1px" bg="gray.100" />
+                                <Box px={4} py={3} cursor="pointer" _hover={{ bg:"red.50" }} onClick={()=>{ setMenuOpen(null); setConfirmDelete(s.id); }}>
+                                  <Text fontSize="sm" fontWeight="700" color="red.500">🗑 Delete spark</Text>
+                                </Box>
+                              </Box>
+                            </>
+                          )}
+                        </Box>
+                      </Flex>
                     </Flex>
                     <SparkMedia mediaUrl={s.mediaUrl} mediaType={s.mediaType} maxH="220px"/>
                     <Text fontSize="sm" color="gray.700" fontWeight="500" mt={3}>{s.caption}</Text>
@@ -1593,6 +2450,21 @@ function MySparkScreen({ user, sparks, onPost }: { user: User; sparks: SparkPost
               );
             })}
           </VStack>
+
+          {/* Delete confirm */}
+          {confirmDelete && (
+            <Box position="fixed" inset={0} zIndex={60} display="flex" alignItems="center" justifyContent="center" bg="blackAlpha.500" onClick={()=>setConfirmDelete(null)}>
+              <Box bg="white" rounded="2xl" px={6} py={6} mx={4} maxW="320px" w="full" shadow="2xl" onClick={e=>e.stopPropagation()}>
+                <Text fontSize="18px" mb={1}>🗑</Text>
+                <Text fontWeight="900" color={BROWN} fontSize="md" mb={2}>Delete this spark?</Text>
+                <Text fontSize="sm" color="gray.500" mb={5} lineHeight="tall">This can&apos;t be undone. Your spark will be permanently removed for everyone.</Text>
+                <Flex gap={3}>
+                  <Button flex={1} variant="outline" borderColor="gray.200" color="gray.500" fontWeight="700" rounded="xl" onClick={()=>setConfirmDelete(null)}>Cancel</Button>
+                  <Button flex={1} bg="red.500" color="white" fontWeight="900" rounded="xl" _hover={{ bg:"red.600" }} onClick={()=>{ onDelete(confirmDelete); setConfirmDelete(null); }}>Delete</Button>
+                </Flex>
+              </Box>
+            </Box>
+          )}
         </>
       )}
     </Box>
@@ -1600,14 +2472,14 @@ function MySparkScreen({ user, sparks, onPost }: { user: User; sparks: SparkPost
 }
 
 // ─── Chats Screen ─────────────────────────────────────────────────────────────
-function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProfile, openedHiConnects, markHiOpened }: {
+function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, onReport, setViewProfile, openedHiConnects, markHiOpened }: {
   user: User; sparks: SparkPost[];
-  onOpenTokens: () => void; onEdit: () => void; onLogout: () => void;
+  onOpenTokens: () => void; onEdit: () => void; onLogout: () => void; onReport: () => void;
   setViewProfile: (u:string)=>void;
   openedHiConnects: Set<string>; markHiOpened: (u:string)=>void;
 }) {
   const mySparks        = sparks.filter(s=>s.userId===user.id);
-  const totalReactions  = mySparks.reduce((sum,s)=>sum+Object.values(s.reactions).reduce((a,b)=>a+b,0),0);
+  const totalReactions  = mySparks.reduce((sum,s)=>sum+Object.values(s.reactions ?? {}).reduce((a,b)=>a+b,0),0);
   // People who said Hi to MY sparks (correct direction)
   const allHiers        = sparks
     .filter(s => s.userId === user.id)
@@ -1625,6 +2497,7 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
   const [showReportModal, setShowReportModal] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLInputElement>(null);
+  const toast     = useToast();
 
   // Load all messages for this user
   useEffect(() => {
@@ -1664,7 +2537,7 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
 
   // Hi Connects = people who said hi to my sparks, NOT yet in any conversation, NOT already opened
   const conversationPartners = new Set(conversations.map(c=>c.partner));
-  const hiConnects = allHiers.filter(h => !conversationPartners.has(h.username));
+  const hiConnects = allHiers.filter(h => !conversationPartners.has(h.username) && !openedHiConnects.has(h.username));
 
   const totalUnread = messages.filter(m=>m.toUsername===user.username && !m.read).length;
 
@@ -1692,7 +2565,15 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
     };
     setMessages(prev => [...prev, optimistic]);
     setMsgText(""); setSending(true);
-    await sendMessage(user.username, activeChat, content);
+    const sendErr = await sendMessage(user.username, activeChat, content);
+    if (sendErr) {
+      // Roll back optimistic message and show error
+      setMessages(prev => prev.filter(m => m.id !== optimistic.id));
+      setMsgText(content);
+      setSending(false);
+      toast({ title:"Message failed", description: sendErr.includes("messages") ? "Messages table not set up. Run the SQL setup in Supabase." : sendErr, status:"error", duration:5000, isClosable:true });
+      return;
+    }
     // Refetch to replace optimistic with real DB record
     const updated = await fetchMessages(user.username);
     setMessages(updated);
@@ -1816,6 +2697,10 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
   // ── Conversation list + passport ──────────────────────────────────────────
   return (
     <Box pb={8}>
+      {/* ── Report button — sticky, always visible ── */}
+      <Box position="sticky" top="0" zIndex={20} px={4} pt={3} pb={3} bg={CREAM} borderBottom="1px solid" borderColor="orange.100" shadow="sm">
+        <Button w="full" size="md" bg={ORANGE} color="white" rounded="xl" fontWeight="800" shadow="md" _hover={{ bg:BROWN }} onClick={onReport}>🚨 Report a Problem / Make a Recommendation</Button>
+      </Box>
       {/* ── Spark Passport ── */}
       <Box mx={{ base:0, md:4 }} mt={{ base:0, md:4 }}>
         <Box rounded={{ base:0, md:"2xl" }} overflow="hidden" shadow={{ base:"none", md:"md" }}
@@ -1857,10 +2742,13 @@ function ChatsScreen({ user, sparks, onOpenTokens, onEdit, onLogout, setViewProf
               <TokenIcon size={14} /><Text fontWeight="900" color={BROWN} fontSize="lg">{user.coins}</Text><Text fontSize="9px" color={BROWN}>Tokens</Text>
             </Box>
           </HStack>
-          <Flex px={{ base:5, md:6 }} pb={5} gap={2}>
+          <Flex px={{ base:5, md:6 }} pb={2} gap={2}>
             <Button flex={1} size="sm" bg="rgba(255,255,255,0.15)" color="white" rounded="xl" fontWeight="700" border="1px solid rgba(255,255,255,0.25)" _hover={{ bg:"rgba(255,255,255,0.25)" }} onClick={onEdit}>✏️ Edit Profile</Button>
             <Button flex={1} size="sm" bg="rgba(255,0,0,0.15)" color="red.200" rounded="xl" fontWeight="700" border="1px solid rgba(255,100,100,0.3)" _hover={{ bg:"rgba(255,0,0,0.25)" }} onClick={onLogout}>🚪 Log Out</Button>
           </Flex>
+          <Box px={{ base:5, md:6 }} pb={5}>
+            <Button w="full" size="sm" bg="rgba(255,255,255,0.18)" color="white" rounded="xl" fontWeight="800" border="1.5px solid rgba(255,255,255,0.35)" _hover={{ bg:"rgba(255,255,255,0.28)" }} onClick={onReport}>🚨 Report / Recommendation</Button>
+          </Box>
         </Box>
       </Box>
 
@@ -1947,15 +2835,26 @@ export default function HomeClient() {
   const [view,             setView]            = useState<View>("feed");
   const [sparks,           setSparks]          = useState<SparkPost[]>([]);
   const [loading,          setLoading]         = useState(true);
+  const [showSplash,       setShowSplash]      = useState(false);
   const [tasks,            setTasks]           = useState<Tasks>(DEFAULT_TASKS);
   const [viewProfile,      setViewProfile]     = useState<string|null>(null);
+  const [challengeActive,  setChallengeActive] = useState(false);
   const [openedHiConnects, setOpenedHiConnects] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem("ca_openedHi") ?? "[]")); }
     catch { return new Set<string>(); }
   });
+  const [globalUploadPct, setGlobalUploadPct] = useState<number>(0);
+  const [hiddenSparks, setHiddenSparks] = useState<Set<number>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("ca_hidden") ?? "[]")); }
+    catch { return new Set<number>(); }
+  });
   const { isOpen:tokensOpen,  onOpen:openTokens,  onClose:closeTokens  } = useDisclosure();
   const { isOpen:inviteOpen,  onOpen:openInvite,  onClose:closeInvite  } = useDisclosure();
   const { isOpen:editOpen,    onOpen:openEdit,    onClose:closeEdit    } = useDisclosure();
+  const { isOpen:reportOpen,  onOpen:openReport,  onClose:closeReport  } = useDisclosure();
+  const [reportSubject, setReportSubject] = useState("");
+  const [reportBody,    setReportBody]    = useState("");
+  const [reportSending, setReportSending] = useState(false);
   const toast = useToast();
 
   // Load sparks from Supabase
@@ -1969,10 +2868,23 @@ export default function HomeClient() {
     (async () => {
       setLoading(true);
       const raw = localStorage.getItem("ca_user");
-      if (raw) setUser(JSON.parse(raw));
+      const u = raw ? JSON.parse(raw) as User : null;
+      if (u) {
+        setUser(u);
+        // Re-sync profile to Supabase — recovers profiles that were only in localStorage
+        // (saveProfile previously failed silently when the password column was missing)
+        saveProfile(u).catch(() => {});
+        // Show welcome splash once per session
+        if (!sessionStorage.getItem("ca_splashed")) {
+          sessionStorage.setItem("ca_splashed", "1");
+          setShowSplash(true);
+        }
+      }
       setTasks(loadTasks());
       await loadSparks();
       setLoading(false);
+      // Track visit for everyone — logged in or not, with real geo-location
+      trackVisit(u);
     })();
   }, [loadSparks]);
 
@@ -1984,13 +2896,18 @@ export default function HomeClient() {
         username: r.username as string, profilePicUrl: (r.profile_pic_url ?? "") as string,
         caption: r.caption as string, mediaUrl: r.media_url as string,
         mediaType: r.media_type as MediaType, reach: r.reach as Reach,
-        reactions: r.reactions as Record<Reaction,number>,
-        reactedBy: r.reacted_by as Record<Reaction,string[]>,
+        reactions: (r.reactions as Record<Reaction,number>) ?? { Encourage:0, "Say Hi":0, Applaud:0, "Keep Going":0 },
+        reactedBy: (r.reacted_by as Record<Reaction,string[]>) ?? { Encourage:[], "Say Hi":[], Applaud:[], "Keep Going":[] },
         sparkType: r.spark_type as SparkType, journeyId: r.journey_id as string,
         linkedSparkId: (r.linked_spark_id ?? undefined) as number|undefined,
         isAdminPost: (r.is_admin_post ?? false) as boolean,
         pinned: (r.pinned ?? false) as boolean,
         adminPostType: (r.admin_post_type ?? 'regular') as string,
+        targetCountry: (r.target_country ?? "") as string, targetState: (r.target_state ?? "") as string,
+        broadcastFreqType: (r.broadcast_freq_type ?? "") as string,
+        broadcastFreqValue: (r.broadcast_freq_value ?? 0) as number,
+        broadcastMaxPerDay: (r.broadcast_max_per_day ?? 0) as number,
+        broadcastExpiresAt: (r.broadcast_expires_at ?? "") as string,
       };
     }
     const channel = supabase
@@ -2007,7 +2924,23 @@ export default function HomeClient() {
         setSparks(prev => prev.filter(s => s.id !== (payload.old as {id:number}).id));
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+
+    // Poll every 10s as fallback — merge so realtime-added items aren't wiped by a stale fetch
+    const poll = setInterval(async () => {
+      const fresh = await fetchSparks();
+      setSparks(prev => {
+        const freshMap = new Map(fresh.map(f => [f.id, f]));
+        // Keep any realtime-only items (not yet in the fetch result) at the top
+        const realtimeOnly = prev.filter(p => !freshMap.has(p.id));
+        return [...realtimeOnly, ...fresh];
+      });
+    }, 10000);
+
+    // Also refresh when user comes back to the tab
+    const onVisible = () => { if (document.visibilityState === "visible") fetchSparks().then(setSparks); };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => { supabase.removeChannel(channel); clearInterval(poll); document.removeEventListener("visibilitychange", onVisible); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2043,6 +2976,50 @@ export default function HomeClient() {
 
   const handlePost = (spark: SparkPost) => {
     setSparks(prev => [spark, ...prev]);
+    if (user) trackEvent("post_spark", user, { reach: spark.reach, spark_type: spark.sparkType });
+  };
+
+  const handleDeleteSpark = async (id: number) => {
+    await supabase.from("sparks").delete().eq("id", id);
+    setSparks(prev => prev.filter(s => s.id !== id));
+    setHiddenSparks(prev => { const next = new Set(prev); next.delete(id); localStorage.setItem("ca_hidden", JSON.stringify([...next])); return next; });
+    toast({ title: "Spark deleted", status: "info", duration: 3000, isClosable: true });
+  };
+
+  const handleToggleHide = (id: number) => {
+    setHiddenSparks(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); toast({ title: "Spark visible again", status: "success", duration: 2500, isClosable: true }); }
+      else { next.add(id); toast({ title: "Spark hidden from feed", status: "info", duration: 2500, isClosable: true }); }
+      localStorage.setItem("ca_hidden", JSON.stringify([...next]));
+      return next;
+    });
+  };
+
+  const handleMilestone = (type: "first_spark" | "reactions_5" | "reactions_10", reactionTotal?: number) => {
+    if (!user) return;
+    let coinsToAdd = 0;
+    const newTasks = { ...tasks };
+    if (type === "first_spark" && !tasks.first_spark_claimed) {
+      newTasks.first_spark_claimed = true;
+      coinsToAdd = 20;
+    } else if (type === "reactions_5" && !tasks.reactions_5_claimed) {
+      newTasks.reactions_5_claimed = true;
+      if (reactionTotal !== undefined) newTasks.total_reactions_given = reactionTotal;
+      coinsToAdd = 10;
+    } else if (type === "reactions_10" && !tasks.reactions_10_claimed) {
+      newTasks.reactions_10_claimed = true;
+      if (reactionTotal !== undefined) newTasks.total_reactions_given = reactionTotal;
+      coinsToAdd = 10;
+    }
+    if (coinsToAdd > 0) {
+      saveTasks(newTasks); setTasks(newTasks);
+      const updated = { ...user, coins: user.coins + coinsToAdd };
+      setUser(updated); localStorage.setItem("ca_user", JSON.stringify(updated));
+      updateCoins(user.id, updated.coins);
+      trackEvent("coin_earned", user, { amount: coinsToAdd, milestone: type });
+      toast({ title:`+${coinsToAdd} tokens earned! 🎉`, description:"Keep up the amazing work! Your tokens are growing. 💛", status:"success", duration:4000, isClosable:true });
+    }
   };
 
   const handleLogout = () => {
@@ -2058,10 +3035,13 @@ export default function HomeClient() {
 
   if (loading) return (
     <ChakraProvider theme={theme}>
-      <Center minH="100vh" bg={CREAM} flexDirection="column" gap={4}>
-        <CreateAfricaLogo size={64} />
-        <Spinner color={ORANGE} size="lg" />
-        <Text fontSize="sm" color="gray.400" fontWeight="600">Loading your sparks…</Text>
+      <Center minH="100vh" bg={CREAM} flexDirection="column" gap={5}>
+        <Box textAlign="center">
+          <Text fontSize="3xl" fontWeight="900" color={BROWN} letterSpacing="-0.5px" lineHeight={1}>icreate</Text>
+          <Text fontSize="xs" fontWeight="800" color={ORANGE} letterSpacing="widest" textTransform="uppercase">.africa</Text>
+        </Box>
+        <Spinner color={ORANGE} size="lg" thickness="3px" />
+        <Text fontSize="xs" color="gray.400" fontWeight="600" letterSpacing="wide">Loading your sparks…</Text>
       </Center>
     </ChakraProvider>
   );
@@ -2096,22 +3076,33 @@ export default function HomeClient() {
     ...(user.isAdmin ? [{ id:"admin" as View, emoji:"⚙️", label:"Admin Panel" }] : []),
   ];
 
-  const MainContent = () => {
-    if (view === "admin" && user.isAdmin) {
-      return <AdminDashboard onClose={() => setView("feed")} />;
-    }
-    return (
-      <>
-        {view==="feed"   && <FeedScreen   user={user} sparks={sparks} setSparks={setSparks} onShowMySpark={()=>setView("mypark")} setViewProfile={setViewProfile} />}
-        {view==="mypark" && <MySparkScreen user={user} sparks={sparks} onPost={handlePost} />}
-        {view==="chats"  && <ChatsScreen  user={user} sparks={sparks} onOpenTokens={openTokens} onEdit={openEdit} onLogout={handleLogout} setViewProfile={setViewProfile} openedHiConnects={openedHiConnects} markHiOpened={markHiOpened} />}
-      </>
-    );
+  const handleUploadStart = () => {
+    setView("feed");
+    setGlobalUploadPct(1);
   };
+
+  const mainContent = (
+    <>
+      {view==="feed"   && <FeedScreen   user={user} sparks={sparks} setSparks={setSparks} onShowMySpark={()=>setView("mypark")} setViewProfile={setViewProfile} tasks={tasks} onMilestone={(type, total) => handleMilestone(type, total)} onJoinChallenge={()=>{ setChallengeActive(true); setView("mypark"); }} onOpenBeyond={openTokens} hiddenSparks={hiddenSparks} onRefresh={loadSparks} />}
+      {view==="mypark" && <MySparkScreen user={user} sparks={sparks} onPost={handlePost} onMilestone={(type) => handleMilestone(type)} challengeMode={challengeActive} onClearChallenge={()=>setChallengeActive(false)} onDelete={handleDeleteSpark} onToggleHide={handleToggleHide} hiddenSparks={hiddenSparks} onUploadStart={handleUploadStart} onProgress={(pct) => { setGlobalUploadPct(pct); if (pct >= 100) setTimeout(() => setGlobalUploadPct(0), 1400); }} />}
+      {view==="chats"  && <ChatsScreen  user={user} sparks={sparks} onOpenTokens={openTokens} onEdit={openEdit} onLogout={handleLogout} onReport={openReport} setViewProfile={setViewProfile} openedHiConnects={openedHiConnects} markHiOpened={markHiOpened} />}
+    </>
+  );
 
   return (
     <ChakraProvider theme={theme}>
+      {/* ── Welcome Splash ── */}
+      {showSplash && user && (
+        <WelcomeSplash user={user} onComplete={() => setShowSplash(false)} />
+      )}
+
       <Box bg={CREAM} minH="100vh">
+        {/* ── Global upload progress bar ── */}
+        {globalUploadPct > 0 && (
+          <Box position="fixed" top={0} left={0} right={0} zIndex={9999} h="3px" bg="orange.100">
+            <Box h="full" bg={ORANGE} transition="width 0.3s ease" style={{ width: globalUploadPct >= 100 ? "100%" : `${globalUploadPct}%` }} />
+          </Box>
+        )}
 
         {/* ── DESKTOP ───────────────────────────────────────────────────── */}
         <Box display={{ base:"none", lg:"block" }} maxW="1280px" mx="auto">
@@ -2125,7 +3116,7 @@ export default function HomeClient() {
                   {NAV_ITEMS.map(item=>(
                     <Button key={item.id} variant="ghost" justifyContent="flex-start" gap={3} px={3} py={5} rounded="xl"
                       color={view===item.id?ORANGE:"gray.600"} bg={view===item.id?"orange.50":"transparent"}
-                      fontWeight={view===item.id?"800":"600"} fontSize="sm" _hover={{ bg:"orange.50", color:ORANGE }} onClick={()=>setView(item.id)}>
+                      fontWeight={view===item.id?"800":"600"} fontSize="sm" _hover={{ bg:"orange.50", color:ORANGE }} onClick={()=>{ setView(item.id); if(user) trackEvent("view", user, { tab: item.id }); }}>
                       <Text fontSize="18px">{item.emoji}</Text>
                       <Text flex={1}>{item.label}</Text>
                       {item.badge ? <Badge bg={ORANGE} color="white" rounded="full" fontSize="10px">{item.badge}</Badge> : null}
@@ -2155,7 +3146,7 @@ export default function HomeClient() {
 
             {/* Main */}
             <GridItem>
-              <Box maxW="640px" mx="auto"><MainContent /></Box>
+              <Box maxW="640px" mx="auto">{mainContent}</Box>
             </GridItem>
 
             {/* Right sidebar */}
@@ -2165,7 +3156,7 @@ export default function HomeClient() {
                   <VStack spacing={4} align="stretch">
                     <Text fontSize="xs" fontWeight="800" color="gray.400" textTransform="uppercase" letterSpacing="wide">Show Your Spark</Text>
                     <Box bg="white" rounded="2xl" shadow="sm" overflow="hidden" border="1px solid" borderColor="orange.100">
-                      <Box h="3px" bg={ORANGE}/><Box p={4}><UploadForm user={user} sparks={sparks} onPost={handlePost} /></Box>
+                      <Box h="3px" bg={ORANGE}/><Box p={4}><UploadForm user={user} sparks={sparks} onPost={handlePost} onMilestone={(type) => handleMilestone(type)} /></Box>
                     </Box>
                   </VStack>
                 ) : view==="mypark" ? (
@@ -2173,7 +3164,7 @@ export default function HomeClient() {
                     <Text fontSize="xs" fontWeight="800" color="gray.400" textTransform="uppercase" letterSpacing="wide">Your Stats</Text>
                     <Box bg="white" rounded="2xl" p={4} shadow="sm" border="1px solid" borderColor="orange.100">
                       <VStack spacing={3}>
-                        {[["Sparks", sparks.filter(s=>s.userId===user.id).length], ["Total reactions", sparks.filter(s=>s.userId===user.id).reduce((sum,s)=>sum+Object.values(s.reactions).reduce((a,b)=>a+b,0),0)], ["Hi Connects", hiConnectCount]].map(([l,v]) => (
+                        {[["Sparks", sparks.filter(s=>s.userId===user.id).length], ["Total reactions", sparks.filter(s=>s.userId===user.id).reduce((sum,s)=>sum+Object.values(s.reactions ?? {}).reduce((a,b)=>a+b,0),0)], ["Hi Connects", hiConnectCount]].map(([l,v]) => (
                           <Flex key={l as string} w="full" justify="space-between" align="center">
                             <Text fontSize="sm" color="gray.500" fontWeight="600">{l}</Text>
                             <Text fontWeight="900" color={BROWN}>{v}</Text>
@@ -2205,7 +3196,7 @@ export default function HomeClient() {
               {user.coins} tokens
             </Button>
           </Flex>
-          <Box pb={24}><MainContent />
+          <Box pb={24}>{mainContent}
             <Text fontSize="10px" color="gray.300" textAlign="center" pb={4}>Powered by DotXan Tech</Text>
           </Box>
           <Box position="fixed" bottom={0} left={0} right={0} bg="white" borderTop="1px solid" borderColor="orange.100" zIndex={20} shadow="0 -2px 10px rgba(0,0,0,0.06)">
@@ -2213,7 +3204,7 @@ export default function HomeClient() {
               {NAV_ITEMS.map(item=>(
                 <Button key={item.id} flex={1} variant="ghost" rounded={0} py={5} flexDirection="column" gap={0.5}
                   color={view===item.id?ORANGE:"gray.400"} bg={view===item.id?"orange.50":"transparent"}
-                  _hover={{ bg:"orange.50" }} onClick={()=>setView(item.id)} position="relative">
+                  _hover={{ bg:"orange.50" }} onClick={()=>{ setView(item.id); trackEvent("view", user, { tab: item.id }); }} position="relative">
                   <Text fontSize="18px">{item.emoji}</Text>
                   <Text fontSize="9px" fontWeight={view===item.id?"800":"600"}>{item.label}</Text>
                   {item.badge ? <Badge position="absolute" top="6px" right="calc(50% - 20px)" bg={ORANGE} color="white" rounded="full" fontSize="9px" minW="16px" textAlign="center">{item.badge}</Badge> : null}
@@ -2223,10 +3214,83 @@ export default function HomeClient() {
           </Box>
         </Box>
 
-        <GreatBeyondModal isOpen={tokensOpen} onClose={closeTokens} coins={user.coins} />
+        <GreatBeyondModal isOpen={tokensOpen} onClose={closeTokens} coins={user.coins} tasks={tasks} />
         <InviteModal     isOpen={inviteOpen} onClose={closeInvite} user={user} />
         <EditProfileModal isOpen={editOpen} onClose={closeEdit} user={user} onSave={handleEditSave} />
         <ProfilePassportModal username={viewProfile} sparks={sparks} setSparks={setSparks} currentUser={user} onClose={()=>setViewProfile(null)} />
+
+        {/* ── Report / Complaint Modal ── */}
+        <Modal isOpen={reportOpen} onClose={closeReport} isCentered>
+          <ModalOverlay bg="blackAlpha.600" backdropFilter="blur(4px)" />
+          <ModalContent rounded="2xl" mx={4} bg="white">
+            <Box h="4px" bg={ORANGE} roundedTop="2xl" />
+            <ModalCloseButton color={BROWN} mt={1} />
+            <ModalBody p={6}>
+              <Text fontWeight="900" color={BROWN} fontSize="lg" mb={1}>🚨 Report a Problem</Text>
+              <Text fontSize="xs" color="gray.400" mb={4}>We take all reports seriously. Our team will respond in your messages.</Text>
+              <VStack spacing={3}>
+                <Input
+                  placeholder="Subject (e.g. Bug, Abuse, Other)"
+                  value={reportSubject}
+                  onChange={e => setReportSubject(e.target.value)}
+                  rounded="xl"
+                  border="1.5px solid"
+                  borderColor="orange.200"
+                  _focus={{ borderColor: ORANGE, boxShadow: "none" }}
+                  fontWeight="600"
+                  color={BROWN}
+                />
+                <Textarea
+                  placeholder="Describe your issue in detail..."
+                  value={reportBody}
+                  onChange={e => setReportBody(e.target.value)}
+                  rows={5}
+                  rounded="xl"
+                  border="1.5px solid"
+                  borderColor="orange.200"
+                  _focus={{ borderColor: ORANGE, boxShadow: "none" }}
+                  fontWeight="600"
+                  color={BROWN}
+                  resize="none"
+                />
+                <Button
+                  w="full"
+                  bg={ORANGE}
+                  color="white"
+                  rounded="xl"
+                  fontWeight="800"
+                  _hover={{ bg: BROWN }}
+                  isLoading={reportSending}
+                  isDisabled={!reportBody.trim()}
+                  onClick={async () => {
+                    if (!reportBody.trim()) return;
+                    setReportSending(true);
+                    await supabase.from("reports").insert({
+                      from_username: user.username,
+                      user_id: user.id,
+                      subject: reportSubject.trim(),
+                      body: reportBody.trim(),
+                      status: "open",
+                    });
+                    setReportSending(false);
+                    setReportSubject("");
+                    setReportBody("");
+                    closeReport();
+                    toast({
+                      title: "Report sent!",
+                      description: "We'll get back to you in your messages.",
+                      status: "success",
+                      duration: 4000,
+                      isClosable: true,
+                    });
+                  }}
+                >
+                  Send Report
+                </Button>
+              </VStack>
+            </ModalBody>
+          </ModalContent>
+        </Modal>
       </Box>
     </ChakraProvider>
   );
