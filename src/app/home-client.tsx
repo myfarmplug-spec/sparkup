@@ -101,7 +101,7 @@ type Reaction  = "Encourage" | "Say Hi" | "Applaud" | "Keep Going";
 type Reach     = "share" | "beyond";
 type SparkType = "new" | "ongoing";
 type MediaType = "video" | "image";
-type View      = "feed" | "mypark" | "chats" | "admin";
+type View      = "feed" | "mypark" | "chats" | "admin" | "beyond";
 
 const REACTIONS: { label: Reaction; emoji: string }[] = [
   { label: "Encourage", emoji: "💪" },
@@ -947,6 +947,326 @@ function GreatBeyondTeaser({ onOpen }: { onOpen: () => void }) {
         </Box>
         <Text fontSize="xs" color={GOLD} fontWeight="800">→</Text>
       </Flex>
+    </Box>
+  );
+}
+
+// ─── Great Spark Beyond helpers ───────────────────────────────────────────────
+function getBeyondState(): { isOpen: boolean; endsIn: { h:number; m:number; s:number }; opensIn: { d:number; h:number; m:number; s:number } } {
+  const now = new Date();
+  const y = now.getFullYear(), mo = now.getMonth();
+  const openStart = new Date(y, mo, 5, 0, 0, 0);
+  const openEnd   = new Date(y, mo, 5, 48, 0, 0); // 48 h window
+  if (now >= openStart && now < openEnd) {
+    const diff = openEnd.getTime() - now.getTime();
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    return { isOpen: true, endsIn: { h, m, s }, opensIn: { d:0, h:0, m:0, s:0 } };
+  }
+  let next = new Date(y, mo, 5, 0, 0, 0);
+  if (now >= openEnd) next = new Date(y, mo + 1, 5, 0, 0, 0);
+  const diff = next.getTime() - now.getTime();
+  const d = Math.floor(diff / 86400000);
+  const h = Math.floor((diff % 86400000) / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  return { isOpen: false, endsIn: { h:0, m:0, s:0 }, opensIn: { d, h, m, s } };
+}
+
+// African geometric SVG pattern (kente-inspired diagonal diamonds)
+const AFRICAN_PATTERN = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='none'/%3E%3Cpath d='M0 20 L20 0 L40 20 L20 40 Z' fill='none' stroke='%23F5A62322' stroke-width='1'/%3E%3Cpath d='M10 20 L20 10 L30 20 L20 30 Z' fill='%23F5A62311'/%3E%3C/svg%3E")`;
+
+function BeyondScreen({ user, sparks, onNavigate }: { user: User; sparks: SparkPost[]; onNavigate: (v: View) => void }) {
+  const [state, setState] = useState(() => getBeyondState());
+  const [tab, setTab] = useState<"home" | "challenges" | "top" | "credits">("home");
+
+  useEffect(() => {
+    const t = setInterval(() => setState(getBeyondState()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const userSparks  = sparks.filter(s => s.userId === user.id);
+  const topSparks   = [...sparks]
+    .filter(s => s.userId !== "icreate-admin")
+    .sort((a, b) => Object.values(b.reactions ?? {}).reduce((x,y)=>x+y,0) - Object.values(a.reactions ?? {}).reduce((x,y)=>x+y,0))
+    .slice(0, 10);
+  const myReactionTotal = sparks.reduce((sum, s) => {
+    const reacted = (Object.keys(s.reactedBy) as Reaction[]).some(r => s.reactedBy[r]?.includes(user.username));
+    return sum + (reacted ? 1 : 0);
+  }, 0);
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  const challenges = [
+    { emoji:"🌍", title:"Show Africa Your Spark", desc:"Upload a spark that represents your culture, craft, or story. The most-applauded spark wins recognition across the platform.", credits: 50, tag:"Active" },
+    { emoji:"💬", title:"Encourage 10 Creators", desc:"React to 10 different sparks this month. Every creator you encourage earns you Spark Credits.", credits: 30, tag:"Ongoing" },
+    { emoji:"🤝", title:"Invite a Creator", desc:"Invite someone new to icreate.africa. When they share their first spark, you both earn bonus credits.", credits: 50, tag:"Always On" },
+    { emoji:"📣", title:"Shout Out a Spark", desc:"Use the share button on any spark to spread it. Help another creator reach further.", credits: 20, tag:"Easy" },
+  ];
+
+  const howToEarn = [
+    { icon:"🔥", action:"Share a Spark",          credits:"+20 credits" },
+    { icon:"👏", action:"Applaud a creator",       credits:"+5 credits"  },
+    { icon:"💬", action:"Encourage someone",       credits:"+5 credits"  },
+    { icon:"📚", action:"Complete a challenge",    credits:"+30 credits" },
+    { icon:"🤝", action:"Invite a friend",         credits:"+50 credits" },
+    { icon:"📅", action:"Daily check-in",          credits:"+1 credit"   },
+  ];
+
+  const DARK = "#1A0800";
+  const MID  = "#3D1200";
+
+  return (
+    <Box minH="100vh" bg={state.isOpen ? DARK : "#0F0800"} backgroundImage={AFRICAN_PATTERN} backgroundRepeat="repeat">
+      <style>{`
+        @keyframes beyondGlow { 0%,100%{opacity:.7;transform:scale(1)} 50%{opacity:1;transform:scale(1.08)} }
+        @keyframes emberFloat { 0%{transform:translateY(0) rotate(0deg);opacity:.8} 100%{transform:translateY(-60px) rotate(20deg);opacity:0} }
+        @keyframes beyondPulse { 0%,100%{box-shadow:0 0 20px #F5A62355} 50%{box-shadow:0 0 50px #F5A623aa,0 0 80px #E05A1C66} }
+        .beyond-ember { position:absolute; width:6px; height:6px; background:${GOLD}; border-radius:50%; animation:emberFloat 3s ease-out infinite; }
+      `}</style>
+
+      {/* ── Header ── */}
+      <Box px={5} pt={6} pb={4} position="relative" overflow="hidden">
+        {state.isOpen && [0,1,2,3,4,5].map(i => (
+          <div key={i} className="beyond-ember" style={{ left:`${15+i*15}%`, bottom:"10px", animationDelay:`${i*0.5}s`, animationDuration:`${2.5+i*0.3}s` }} />
+        ))}
+        <Flex align="center" gap={3} mb={4}>
+          <Box flex={1}>
+            <Text fontSize="10px" fontWeight="800" color={GOLD} textTransform="uppercase" letterSpacing="widest" mb={0.5}>
+              {state.isOpen ? "🟢 Now Open" : "🔒 Coming Soon"}
+            </Text>
+            <Text fontSize={{ base:"22px", md:"28px" }} fontWeight="900" color="white" lineHeight="short">
+              ✨ The Great Spark Beyond
+            </Text>
+          </Box>
+          <Box textAlign="center" bg="rgba(245,166,35,0.15)" border="1.5px solid" borderColor={`${GOLD}66`} rounded="xl" px={3} py={2}>
+            <Text fontSize="10px" color={GOLD} fontWeight="800" textTransform="uppercase">Spark Credits</Text>
+            <Text fontSize="22px" fontWeight="900" color={GOLD}>{user.coins.toLocaleString()}</Text>
+          </Box>
+        </Flex>
+
+        {state.isOpen ? (
+          <Box bg="rgba(245,166,35,0.12)" border="1px solid" borderColor={`${GOLD}55`} rounded="xl" px={4} py={3} style={{ animation:"beyondPulse 2.5s ease-in-out infinite" }}>
+            <Text fontSize="sm" fontWeight="800" color={GOLD} mb={0.5}>
+              🎉 The Great Spark Beyond is now open!
+            </Text>
+            <Text fontSize="xs" color="rgba(255,255,255,0.7)" fontWeight="600">
+              Closes in {pad(state.endsIn.h)}h {pad(state.endsIn.m)}m {pad(state.endsIn.s)}s — use your credits now
+            </Text>
+          </Box>
+        ) : (
+          <Box>
+            <Text fontSize="xs" color="rgba(255,255,255,0.5)" fontWeight="700" textTransform="uppercase" letterSpacing="wide" mb={2}>
+              Opens on the 5th — time remaining
+            </Text>
+            <Flex gap={2}>
+              {[
+                { v: state.opensIn.d, l:"Days"    },
+                { v: state.opensIn.h, l:"Hours"   },
+                { v: state.opensIn.m, l:"Minutes" },
+                { v: state.opensIn.s, l:"Seconds" },
+              ].map(({ v, l }) => (
+                <Box key={l} flex={1} bg="rgba(245,166,35,0.1)" border="1px solid" borderColor={`${GOLD}44`} rounded="xl" py={2} textAlign="center">
+                  <Text fontSize={{ base:"22px", md:"28px" }} fontWeight="900" color={GOLD} lineHeight={1}>{pad(v)}</Text>
+                  <Text fontSize="9px" color="rgba(255,255,255,0.4)" fontWeight="700" textTransform="uppercase" letterSpacing="wide">{l}</Text>
+                </Box>
+              ))}
+            </Flex>
+          </Box>
+        )}
+      </Box>
+
+      {/* ── Tabs ── */}
+      <Flex px={5} gap={1} mb={4} overflowX="auto" css={{ scrollbarWidth:"none" }}>
+        {([
+          { id:"home",       label:"Overview"   },
+          { id:"challenges", label:"Challenges" },
+          { id:"top",        label:"Top Sparks" },
+          { id:"credits",    label:"My Credits" },
+        ] as const).map(t => (
+          <Button key={t.id} size="sm" rounded="full" fontWeight="700" fontSize="xs" flexShrink={0}
+            bg={tab===t.id ? GOLD : "rgba(255,255,255,0.08)"}
+            color={tab===t.id ? DARK : "rgba(255,255,255,0.6)"}
+            _hover={{ bg: tab===t.id ? GOLD : "rgba(255,255,255,0.15)" }}
+            border="1px solid" borderColor={tab===t.id ? GOLD : "transparent"}
+            onClick={() => setTab(t.id)}>
+            {t.label}
+          </Button>
+        ))}
+      </Flex>
+
+      {/* ── Tab Content ── */}
+      <Box px={5} pb={10}>
+
+        {/* OVERVIEW */}
+        {tab === "home" && (
+          <VStack spacing={4} align="stretch">
+            {!state.isOpen && (
+              <Box bg={`linear-gradient(135deg, ${MID}, #5C1F00)`} border="1.5px solid" borderColor={`${GOLD}55`} rounded="2xl" px={5} py={5}>
+                <Text fontSize="sm" fontWeight="900" color={GOLD} mb={1}>🌍 Prepare Your Spark</Text>
+                <Text fontSize="sm" color="rgba(255,255,255,0.8)" lineHeight="tall" fontWeight="600">
+                  The Great Spark Beyond opens on the 5th of every month for 48 hours.
+                  African creators gather, showcase their sparks, and gain recognition from across the continent.
+                  Upload more sparks now to earn credits — and be ready.
+                </Text>
+              </Box>
+            )}
+
+            {/* What happens inside */}
+            <Text fontSize="11px" fontWeight="800" color="rgba(255,255,255,0.4)" textTransform="uppercase" letterSpacing="widest">Inside The Beyond</Text>
+            <Grid templateColumns="1fr 1fr" gap={3}>
+              {[
+                { icon:"⚡", title:"Spark Challenges",   desc:"Compete in monthly creator challenges" },
+                { icon:"🏆", title:"Top Sparks Africa",  desc:"Discover celebrated creators continent-wide" },
+                { icon:"🎯", title:"Boost Your Reach",   desc:"Spend credits to reach more people" },
+                { icon:"🤝", title:"Collaborate",        desc:"Connect with and lift up other creators" },
+                { icon:"🎖️", title:"Recognition",        desc:"Earn badges and platform-wide spotlight" },
+                { icon:"🔓", title:"Unlock Features",    desc:"Exclusive tools for credit holders" },
+              ].map(({ icon, title, desc }) => (
+                <Box key={title} bg="rgba(255,255,255,0.05)" border="1px solid" borderColor="rgba(255,255,255,0.1)" rounded="xl" p={3}>
+                  <Text fontSize="20px" mb={1}>{icon}</Text>
+                  <Text fontSize="xs" fontWeight="900" color="white" mb={0.5}>{title}</Text>
+                  <Text fontSize="10px" color="rgba(255,255,255,0.5)" lineHeight="short">{desc}</Text>
+                </Box>
+              ))}
+            </Grid>
+
+            <Box bg="rgba(245,166,35,0.08)" border="1px solid" borderColor={`${GOLD}33`} rounded="xl" px={4} py={4}>
+              <Text fontSize="xs" fontWeight="900" color={GOLD} mb={3} textTransform="uppercase" letterSpacing="wide">How to Earn Spark Credits</Text>
+              <VStack spacing={2} align="stretch">
+                {howToEarn.map(({ icon, action, credits }) => (
+                  <Flex key={action} align="center" justify="space-between">
+                    <Flex align="center" gap={2}>
+                      <Text fontSize="14px">{icon}</Text>
+                      <Text fontSize="xs" color="rgba(255,255,255,0.75)" fontWeight="600">{action}</Text>
+                    </Flex>
+                    <Text fontSize="xs" fontWeight="900" color={GOLD}>{credits}</Text>
+                  </Flex>
+                ))}
+              </VStack>
+            </Box>
+
+            <Button size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={() => onNavigate("mypark")}>
+              🔥 Upload More Sparks → Earn Credits
+            </Button>
+          </VStack>
+        )}
+
+        {/* CHALLENGES */}
+        {tab === "challenges" && (
+          <VStack spacing={4} align="stretch">
+            <Box bg={MID} border="1px solid" borderColor={`${GOLD}44`} rounded="xl" px={4} py={3}>
+              <Text fontSize="xs" color="rgba(255,255,255,0.7)" fontWeight="600" lineHeight="tall">
+                Complete challenges to earn Spark Credits. Credits unlock special actions inside The Beyond when it opens on the 5th.
+              </Text>
+            </Box>
+            {challenges.map(c => (
+              <Box key={c.title} bg="rgba(255,255,255,0.05)" border="1px solid" borderColor="rgba(255,255,255,0.1)" rounded="2xl" overflow="hidden">
+                <Box h="3px" bg={`linear-gradient(90deg, ${GOLD}, ${ORANGE})`} />
+                <Box px={4} py={4}>
+                  <Flex align="center" gap={3} mb={2}>
+                    <Text fontSize="24px">{c.emoji}</Text>
+                    <Box flex={1}>
+                      <Text fontSize="sm" fontWeight="900" color="white">{c.title}</Text>
+                      <Text fontSize="10px" fontWeight="700" color={GOLD} bg="rgba(245,166,35,0.15)" px={2} py={0.5} rounded="full" display="inline-block">{c.tag}</Text>
+                    </Box>
+                    <Box textAlign="right">
+                      <Text fontSize="16px" fontWeight="900" color={GOLD}>+{c.credits}</Text>
+                      <Text fontSize="9px" color="rgba(255,255,255,0.4)">credits</Text>
+                    </Box>
+                  </Flex>
+                  <Text fontSize="xs" color="rgba(255,255,255,0.65)" lineHeight="tall">{c.desc}</Text>
+                </Box>
+              </Box>
+            ))}
+          </VStack>
+        )}
+
+        {/* TOP SPARKS */}
+        {tab === "top" && (
+          <VStack spacing={3} align="stretch">
+            <Box bg={MID} border="1px solid" borderColor={`${GOLD}44`} rounded="xl" px={4} py={3}>
+              <Text fontSize="xs" color="rgba(255,255,255,0.7)" fontWeight="600">
+                🏆 The most celebrated sparks from across Africa — ranked by community reactions.
+              </Text>
+            </Box>
+            {topSparks.length === 0 && (
+              <Center py={10} flexDirection="column" gap={3}>
+                <Text fontSize="36px">🌟</Text>
+                <Text color="rgba(255,255,255,0.5)" fontWeight="700">No sparks yet — be the first!</Text>
+                <Button bg={ORANGE} color="white" fontWeight="800" rounded="xl" onClick={() => onNavigate("mypark")}>Upload Your Spark</Button>
+              </Center>
+            )}
+            {topSparks.map((s, i) => {
+              const total = Object.values(s.reactions ?? {}).reduce((a, b) => a + b, 0);
+              return (
+                <Flex key={s.id} gap={3} align="center" bg="rgba(255,255,255,0.05)" border="1px solid" borderColor={i<3?"rgba(245,166,35,0.3)":"rgba(255,255,255,0.08)"} rounded="xl" px={4} py={3}>
+                  <Text fontSize="18px" fontWeight="900" color={i===0?GOLD:i===1?"#C0C0C0":i===2?"#CD7F32":"rgba(255,255,255,0.3)"} w="24px" textAlign="center">
+                    {i===0?"🥇":i===1?"🥈":i===2?"🥉":`${i+1}`}
+                  </Text>
+                  <Box w="36px" h="36px" rounded="full" overflow="hidden" flexShrink={0} border="1.5px solid" borderColor={i<3?GOLD:"rgba(255,255,255,0.2)"}>
+                    {s.profilePicUrl ? <img src={s.profilePicUrl} style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : <Avatar name={s.name} size="sm" bg={ORANGE} />}
+                  </Box>
+                  <Box flex={1} minW={0}>
+                    <Text fontSize="xs" fontWeight="900" color="white" noOfLines={1}>{s.name}</Text>
+                    <Text fontSize="10px" color="rgba(255,255,255,0.45)" noOfLines={1}>@{s.username}</Text>
+                  </Box>
+                  <Flex align="center" gap={1}>
+                    <Text fontSize="14px">🔥</Text>
+                    <Text fontSize="sm" fontWeight="900" color={i<3?GOLD:"rgba(255,255,255,0.6)"}>{total}</Text>
+                  </Flex>
+                </Flex>
+              );
+            })}
+          </VStack>
+        )}
+
+        {/* MY CREDITS */}
+        {tab === "credits" && (
+          <VStack spacing={4} align="stretch">
+            <Box bg={`linear-gradient(135deg, ${MID}, #5C1F00)`} border="2px solid" borderColor={GOLD} rounded="2xl" px={5} py={5} textAlign="center" style={{ animation:"beyondPulse 3s ease-in-out infinite" }}>
+              <Text fontSize="12px" fontWeight="800" color="rgba(255,255,255,0.5)" textTransform="uppercase" letterSpacing="widest" mb={1}>Your Spark Credits</Text>
+              <Text fontSize="52px" fontWeight="900" color={GOLD} lineHeight={1}>{user.coins.toLocaleString()}</Text>
+              <Text fontSize="xs" color="rgba(255,255,255,0.5)" mt={1}>Earned by sharing, encouraging &amp; participating</Text>
+            </Box>
+            <Box bg="rgba(255,255,255,0.05)" border="1px solid" borderColor="rgba(255,255,255,0.1)" rounded="2xl" px={4} py={4}>
+              <Text fontSize="xs" fontWeight="900" color={GOLD} mb={3} textTransform="uppercase" letterSpacing="wide">Your Activity</Text>
+              <VStack spacing={2} align="stretch">
+                {[
+                  { icon:"🔥", label:"Sparks shared",      value: userSparks.length },
+                  { icon:"👏", label:"Creators encouraged", value: myReactionTotal   },
+                  { icon:"✨", label:"Total credits",       value: user.coins        },
+                ].map(({ icon, label, value }) => (
+                  <Flex key={label} align="center" justify="space-between" py={1} borderBottom="1px solid" borderColor="rgba(255,255,255,0.07)" _last={{ border:"none" }}>
+                    <Flex align="center" gap={2}>
+                      <Text fontSize="14px">{icon}</Text>
+                      <Text fontSize="xs" color="rgba(255,255,255,0.7)" fontWeight="600">{label}</Text>
+                    </Flex>
+                    <Text fontSize="sm" fontWeight="900" color={GOLD}>{value}</Text>
+                  </Flex>
+                ))}
+              </VStack>
+            </Box>
+            <Box bg="rgba(245,166,35,0.08)" border="1px solid" borderColor={`${GOLD}33`} rounded="xl" px={4} py={4}>
+              <Text fontSize="xs" fontWeight="900" color={GOLD} mb={2}>What you can do with credits on April 5th</Text>
+              {[
+                "🚀 Promote your spark to reach more people across Africa",
+                "🎯 Enter premium Spark Challenges with bigger rewards",
+                "🤝 Unlock collaboration requests with top creators",
+                "🏆 Compete for the monthly spotlight badge",
+              ].map(item => (
+                <Flex key={item} align="flex-start" gap={2} mb={2}>
+                  <Text fontSize="xs" color="rgba(255,255,255,0.65)" lineHeight="tall">{item}</Text>
+                </Flex>
+              ))}
+            </Box>
+            <Button size="lg" bg={ORANGE} color="white" fontWeight="900" rounded="xl" _hover={{ bg:"#c44d16" }} onClick={() => onNavigate("mypark")}>
+              🔥 Upload More → Earn More Credits
+            </Button>
+          </VStack>
+        )}
+      </Box>
     </Box>
   );
 }
@@ -3091,9 +3411,11 @@ export default function HomeClient() {
     });
   };
 
+  const beyondIsOpen = getBeyondState().isOpen;
   const NAV_ITEMS: { id:View; emoji:string; label:string; badge?:number }[] = [
     { id:"feed",   emoji:"🏠", label:"Spark Feed" },
     { id:"mypark", emoji:"✨", label:"My Spark"   },
+    { id:"beyond", emoji:"🌍", label:"The Beyond", badge: beyondIsOpen ? 1 : undefined },
     { id:"chats",  emoji:"💬", label:"Hi & Chats", badge:hiConnectCount||undefined },
     ...(user.isAdmin ? [{ id:"admin" as View, emoji:"⚙️", label:"Admin Panel" }] : []),
   ];
@@ -3105,8 +3427,9 @@ export default function HomeClient() {
 
   const mainContent = (
     <>
-      {view==="feed"   && <FeedScreen   user={user} sparks={sparks} setSparks={setSparks} onShowMySpark={()=>setView("mypark")} setViewProfile={setViewProfile} tasks={tasks} onMilestone={(type, total) => handleMilestone(type, total)} onJoinChallenge={()=>{ setChallengeActive(true); setView("mypark"); }} onOpenBeyond={openTokens} hiddenSparks={hiddenSparks} onRefresh={loadSparks} />}
+      {view==="feed"   && <FeedScreen   user={user} sparks={sparks} setSparks={setSparks} onShowMySpark={()=>setView("mypark")} setViewProfile={setViewProfile} tasks={tasks} onMilestone={(type, total) => handleMilestone(type, total)} onJoinChallenge={()=>{ setChallengeActive(true); setView("mypark"); }} onOpenBeyond={()=>setView("beyond")} hiddenSparks={hiddenSparks} onRefresh={loadSparks} />}
       {view==="mypark" && <MySparkScreen user={user} sparks={sparks} onPost={handlePost} onMilestone={(type) => handleMilestone(type)} challengeMode={challengeActive} onClearChallenge={()=>setChallengeActive(false)} onDelete={handleDeleteSpark} onToggleHide={handleToggleHide} hiddenSparks={hiddenSparks} onUploadStart={handleUploadStart} onProgress={(pct) => { setGlobalUploadPct(pct); if (pct >= 100) setTimeout(() => setGlobalUploadPct(0), 1400); }} />}
+      {view==="beyond" && <BeyondScreen  user={user} sparks={sparks} onNavigate={setView} />}
       {view==="chats"  && <ChatsScreen  user={user} sparks={sparks} onOpenTokens={openTokens} onEdit={openEdit} onLogout={handleLogout} onReport={openReport} setViewProfile={setViewProfile} openedHiConnects={openedHiConnects} markHiOpened={markHiOpened} />}
     </>
   );
@@ -3154,7 +3477,7 @@ export default function HomeClient() {
                     <Box flex={1} minW={0}><Text fontWeight="800" color={BROWN} fontSize="sm" noOfLines={1}>{user.name}</Text><Text fontSize="11px" color="gray.400">@{user.username}</Text></Box>
                   </Flex>
                   <Button w="full" size="sm" bg="#FFFBF0" border="1.5px solid" borderColor={GOLD} rounded="xl" fontWeight="700" color={BROWN} _hover={{ bg:"#FFF3D0" }} onClick={openTokens} leftIcon={<TokenIcon size={13} />}>
-                    {user.coins.toLocaleString()} tokens
+                    {user.coins.toLocaleString()} Spark Credits
                   </Button>
                 </Box>
                 <Box flex={1} />
@@ -3215,7 +3538,7 @@ export default function HomeClient() {
           <Flex bg="white" px={4} py={2.5} align="center" justify="space-between" borderBottom="1px solid" borderColor="orange.100" position="sticky" top={0} zIndex={20}>
             <CreateAfricaLogo size={40} />
             <Button size="sm" bg={user.coins>0?"#FFFBF0":"orange.50"} border="1.5px solid" borderColor={user.coins>0?GOLD:"orange.200"} rounded="full" px={3} fontWeight="700" color={BROWN} _hover={{ bg:"#FFF3D0" }} onClick={openTokens} leftIcon={<TokenIcon size={13} />}>
-              {user.coins} tokens
+              {user.coins} Credits
             </Button>
           </Flex>
           <Box pb={24}>{mainContent}
