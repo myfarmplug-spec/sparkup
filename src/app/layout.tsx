@@ -15,19 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "icreate.africa — Show Your Spark",
   description: "Upload your spark. Share your ideas, creations, and passions with Africa. Inspire millions.",
-  icons: {
-    icon: [
-      { url: "/icon.jpg", type: "image/jpeg", sizes: "1024x1024" },
-    ],
-    shortcut: "/icon.jpg",
-    apple: [
-      { url: "/apple-touch-icon.jpg", sizes: "1024x1024", type: "image/jpeg" },
-    ],
-    other: [
-      { rel: "apple-touch-icon", url: "/apple-touch-icon.jpg" },
-    ],
-  },
-  manifest: "/manifest.json",
+  icons: { icon: "/logotransparent.png" },
 };
 
 export default function RootLayout({
